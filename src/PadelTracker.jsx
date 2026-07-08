@@ -38,6 +38,8 @@ const K = 32;
 const MIN_MATCHES = 3;
 
 const STORAGE_KEY = "padel_data_v2";
+const DATA_VERSION = 2;
+
 
 async function loadFromStorage() {
   try {
