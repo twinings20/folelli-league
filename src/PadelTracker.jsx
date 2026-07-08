@@ -38,8 +38,7 @@ const K = 32;
 const MIN_MATCHES = 3;
 
 const STORAGE_KEY = "padel_data_v2";
-const DATA_VERSION = 2;
-
+const DATA_VERSION = 3; // ⬆️ Incrémenté à chaque mise à jour officielle des données
 
 async function loadFromStorage() {
   try {
@@ -765,6 +764,7 @@ export default function PadelTracker() {
       { id: "p8", name: "Thomas Andreani" },
       { id: "p9", name: "Ficello" },
       { id: "p10", name: "Petru Pa" },
+      { id: "p11", name: "JB Cozzani" },
       { id: "guest", name: "Invité" },
     ],
     // Matches ordered chronologically; same-day matches get +1h per match to preserve ELO order
@@ -846,6 +846,22 @@ export default function PadelTracker() {
         date: "2026-07-03T19:00:00.000Z",
         a1: "p1", a2: "p9", b1: "p3", b2: "p6",
         sets: [{ a: 7, b: 5 }],
+        superTieBreak: false,
+        note: ""
+      },
+      {
+        id: "m11",
+        date: "2026-07-08T17:00:00.000Z",
+        a1: "p2", a2: "p3", b1: "p11", b2: "p4",
+        sets: [{ a: 3, b: 6 }, { a: 3, b: 6 }],
+        superTieBreak: false,
+        note: ""
+      },
+      {
+        id: "m12",
+        date: "2026-07-08T18:00:00.000Z",
+        a1: "p3", a2: "p4", b1: "p2", b2: "p11",
+        sets: [{ a: 0, b: 6 }, { a: 0, b: 6 }],
         superTieBreak: false,
         note: ""
       },
