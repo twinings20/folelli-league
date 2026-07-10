@@ -250,14 +250,19 @@ function computeElo(players, matches) {
       return pos >= 0 ? pos + 1 : null;
     }).filter(r => r !== null);
 
-    // 5 derniers matchs
+    // 5 derniers matchs (enrichis)
+    const pNameL = id => players.find(pl => pl.id === id)?.name || "?";
     const last5 = sorted.filter(m => [m.a1,m.a2,m.b1,m.b2].includes(p.id)).slice(-5).map(m => {
       const aSets = m.sets.filter(s => s.a > s.b).length;
       const bSets = m.sets.filter(s => s.b > s.a).length;
       const inA = [m.a1,m.a2].includes(p.id);
       const won = (inA && aSets>bSets)||(!inA && bSets>aSets);
-      return won ? "W" : "L";
-    });
+      const partnerId = inA ? (m.a1 === p.id ? m.a2 : m.a1) : (m.b1 === p.id ? m.b2 : m.b1);
+      const opps = inA ? [m.b1, m.b2] : [m.a1, m.a2];
+      const setsTxt = m.sets.map(s => inA ? `${s.a}-${s.b}` : `${s.b}-${s.a}`).join(" · ");
+      const dateTxt = new Date(m.date).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+      return { won, partner: pNameL(partnerId), opp1: pNameL(opps[0]), opp2: pNameL(opps[1]), setsTxt, dateTxt };
+    }).reverse();
 
     // Performance par format
     const formats = { "2-0": {w:0,l:0}, "2-1": {w:0,l:0}, "STB": {w:0,l:0}, "1set": {w:0,l:0} };
@@ -333,6 +338,60 @@ function computeElo(players, matches) {
   return stats;
 }
 
+
+// ─── Joueur du mois ───────────────────────────────────────────────────────────
+// Score = ΔELO du mois + 3×victoires + (% jeux gagnés − 50)/2 · min 2 matchs
+function computeMonthly(players, matches) {
+  const sorted = [...matches].map((m, i) => ({ ...m, _idx: i })).sort((a, b) => new Date(a.date) - new Date(b.date) || a._idx - b._idx);
+  const ratings = {};
+  players.forEach(p => { ratings[p.id] = ELO_START; });
+  const monthly = {}; // month -> playerId -> stats
+
+  sorted.forEach(m => {
+    const month = new Date(m.date).toISOString().slice(0, 7);
+    const aS = m.sets.filter(s => s.a > s.b).length;
+    const bS = m.sets.filter(s => s.b > s.a).length;
+    const aWin = aS > bS;
+    const total = aS + bS;
+    const kM = m.superTieBreak ? 0.70 : total === 1 ? 0.70 : total === 2 ? 1.0 : 0.85;
+    const tA = [m.a1, m.a2].filter(id => ratings[id] !== undefined);
+    const tB = [m.b1, m.b2].filter(id => ratings[id] !== undefined);
+    const avgA = tA.reduce((s, id) => s + ratings[id], 0) / (tA.length || 1);
+    const avgB = tB.reduce((s, id) => s + ratings[id], 0) / (tB.length || 1);
+    const expA = 1 / (1 + Math.pow(10, (avgB - avgA) / 400));
+    const dA = Math.round(K * kM * ((aWin ? 1 : 0) - expA));
+    const dB = Math.round(K * kM * ((aWin ? 0 : 1) - (1 - expA)));
+    const real = m.superTieBreak ? m.sets.slice(0, -1) : m.sets;
+    const gA = real.reduce((s, x) => s + x.a, 0);
+    const gB = real.reduce((s, x) => s + x.b, 0);
+    if (!monthly[month]) monthly[month] = {};
+    const upd = (id, delta, won, gw, gl) => {
+      if (ratings[id] === undefined) return;
+      if (!monthly[month][id]) monthly[month][id] = { dElo: 0, wins: 0, played: 0, gW: 0, gL: 0 };
+      const s = monthly[month][id];
+      s.dElo += delta; s.played += 1; s.gW += gw; s.gL += gl;
+      if (won) s.wins += 1;
+      ratings[id] += delta;
+    };
+    tA.forEach(id => upd(id, dA, aWin, gA, gB));
+    tB.forEach(id => upd(id, dB, !aWin, gB, gA));
+  });
+
+  // Build ranked list per month
+  const result = {};
+  Object.entries(monthly).forEach(([month, byPlayer]) => {
+    const rows = Object.entries(byPlayer)
+      .filter(([, s]) => s.played >= 2)
+      .map(([id, s]) => {
+        const pct = (s.gW + s.gL) > 0 ? (s.gW / (s.gW + s.gL)) * 100 : 50;
+        const score = s.dElo + 3 * s.wins + (pct - 50) / 2;
+        return { id, score: Math.round(score * 10) / 10, dElo: s.dElo, wins: s.wins, played: s.played, pct: Math.round(pct) };
+      })
+      .sort((a, b) => b.score - a.score || b.dElo - a.dElo || b.pct - a.pct);
+    if (rows.length > 0) result[month] = rows;
+  });
+  return result;
+}
 
 // ─── Duo stats ────────────────────────────────────────────────────────────────
 function computeDuos(players, matches) {
@@ -520,29 +579,59 @@ function SetScore({ sets }) {
 }
 
 // ─── Player detail modal ──────────────────────────────────────────────────────
-function PlayerModal({ player, qualifiedOnly, onClose }) {
+function PlayerModal({ player, qualifiedOnly, monthTitles, onClose }) {
   if (!player) return null;
   const winRate = player.played > 0 ? Math.round((player.wins / player.played) * 100) : 0;
+  const gamePct = (player.gamesW + player.gamesL) > 0 ? Math.round(player.gamesW / (player.gamesW + player.gamesL) * 100) : null;
+  const wrColor = v => v >= 60 ? C.green : v >= 40 ? C.accent : C.red;
+  const titles = monthTitles || [];
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 100, display: "flex", alignItems: "flex-end" }}
       onClick={onClose}>
-      <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: "16px 16px 0 0", padding: 20, maxHeight: "80vh", overflowY: "auto" }}
+      <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: "16px 16px 0 0", padding: 20, maxHeight: "85vh", overflowY: "auto" }}
         onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <span style={{ fontFamily: "'Bebas Neue'", fontSize: 22, letterSpacing: 2, color: C.text }}>{player.name}</span>
+
+        {/* ── Tête ── */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 2 }}>
+          <span style={{ fontFamily: "'Bebas Neue'", fontSize: 30, letterSpacing: 2, color: C.text, lineHeight: 1 }}>{player.name}</span>
           <button onClick={onClose} style={{ background: C.border, color: C.muted, padding: "4px 10px", fontSize: 13 }}>✕</button>
         </div>
-
-        {/* ELO big */}
-        <div style={{ textAlign: "center", marginBottom: 16 }}>
-          <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 52, color: C.accent, lineHeight: 1 }}><CountUp target={player.elo} /></div>
-          <div style={{ fontSize: 12, color: C.muted, letterSpacing: 2 }}>ELO</div>
-          {player.lastDelta !== null && <EloDelta delta={player.lastDelta} />}
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 14 }}>
+          {player.currentRank ? `#${player.currentRank} du classement · ` : ""}{player.played} match{player.played > 1 ? "s" : ""} joué{player.played > 1 ? "s" : ""}
         </div>
 
-        {/* Sparkline ELO */}
+        {/* ── 3 stats clés ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+          <div style={{ background: `linear-gradient(135deg, ${C.accent}14, ${C.surface})`, border: `1px solid ${C.accent}44`, borderRadius: 10, padding: "12px 8px", textAlign: "center" }}>
+            <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 30, color: C.accent, lineHeight: 1 }}><CountUp target={player.elo} /></div>
+            <div style={{ fontSize: 9, color: C.muted, marginTop: 4, letterSpacing: 1 }}>ELO</div>
+          </div>
+          <div style={{ background: C.surface, borderRadius: 10, padding: "12px 8px", textAlign: "center" }}>
+            <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 26, color: wrColor(winRate), lineHeight: 1.2 }}>{winRate}%</div>
+            <div style={{ fontSize: 9, color: C.muted, marginTop: 2, letterSpacing: 0.5 }}>WIN RATE ({player.wins}V-{player.losses}D)</div>
+          </div>
+          <div style={{ background: C.surface, borderRadius: 10, padding: "12px 8px", textAlign: "center" }}>
+            <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 26, color: gamePct !== null ? wrColor(gamePct) : C.muted, lineHeight: 1.2 }}>{gamePct !== null ? gamePct + "%" : "—"}</div>
+            <div style={{ fontSize: 9, color: C.muted, marginTop: 2, letterSpacing: 0.5 }}>JEUX GAGNÉS</div>
+          </div>
+        </div>
+
+        {/* ── Palmarès ── */}
+        {titles.length > 0 && (
+          <div style={{ background: `linear-gradient(135deg, ${C.accent}10, ${C.surface})`, border: `1px solid ${C.accent}44`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 20 }}>🏆</span>
+            <div>
+              <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>PALMARÈS</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.accent }}>
+                Joueur du mois{titles.length > 1 ? ` ×${titles.length}` : ""} — {titles.join(", ")}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Courbe ELO ── */}
         {player.history.length > 1 && (
-          <div style={{ background: C.surface, borderRadius: 8, padding: 12, marginBottom: 14 }}>
+          <div style={{ background: C.surface, borderRadius: 8, padding: 12, marginBottom: 10 }}>
             <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1, marginBottom: 8, textAlign: "center" }}>ÉVOLUTION ELO</div>
             <div style={{ display: "flex", justifyContent: "center" }}>
               <MiniSparklineWide history={player.history} />
@@ -550,7 +639,7 @@ function PlayerModal({ player, qualifiedOnly, onClose }) {
           </div>
         )}
 
-        {/* Évolution du classement */}
+        {/* ── Courbe classement ── */}
         {player.rankHistory && player.rankHistory.length > 1 && player.played > 0 && (() => {
           const baseHist = qualifiedOnly && player.rankHistoryQ && player.rankHistoryQ.length > 0 ? player.rankHistoryQ : player.rankHistory;
           const baseCurrent = qualifiedOnly && player.currentRankQ ? player.currentRankQ : player.currentRank;
@@ -561,12 +650,9 @@ function PlayerModal({ player, qualifiedOnly, onClose }) {
           const maxRank = Math.max(...rh);
           const minRank = Math.min(...rh);
           const range = maxRank - minRank;
-          // rank 1 = top of chart (inverted). If flat, center the line.
           const pts = rh.map((r, i) => {
             const x = PAD_X + (i / (rh.length - 1)) * (W - 2 * PAD_X);
-            const y = range === 0
-              ? H / 2
-              : PAD_Y + ((r - minRank) / range) * (H - 2 * PAD_Y);
+            const y = range === 0 ? H / 2 : PAD_Y + ((r - minRank) / range) * (H - 2 * PAD_Y);
             return { x, y, r };
           });
           const polyline = pts.map(p => `${p.x},${p.y}`).join(" ");
@@ -576,7 +662,7 @@ function PlayerModal({ player, qualifiedOnly, onClose }) {
           return (
             <div style={{ background: C.surface, borderRadius: 8, padding: 12, marginBottom: 14 }}>
               <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1, marginBottom: 8, textAlign: "center" }}>
-                PLACE AU CLASSEMENT{qualifiedOnly ? " (QUALIFIÉS)" : ""} · {baseHist.length} DERNIERS MATCHS + AUJOURD'HUI
+                PLACE AU CLASSEMENT{qualifiedOnly ? " (QUALIFIÉS)" : ""}
               </div>
               <div style={{ display: "flex", justifyContent: "center" }}>
                 <svg width={W} height={H}>
@@ -600,123 +686,66 @@ function PlayerModal({ player, qualifiedOnly, onClose }) {
                   </span>
                 ))}
               </div>
-              <div style={{ fontSize: 10, color: C.muted, textAlign: "center", marginTop: 6 }}>
-                Position après chaque match (1 = premier)
-              </div>
             </div>
           );
         })()}
 
-        {/* Core stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
-          <div style={{ background: C.surface, borderRadius: 8, padding: 10, textAlign: "center" }}>
-            <div style={{ fontSize: 20, fontWeight: 700, color: C.green }}>{player.wins}</div>
-            <div style={{ fontSize: 11, color: C.muted }}>Victoires</div>
-          </div>
-          <div style={{ background: C.surface, borderRadius: 8, padding: 10, textAlign: "center" }}>
-            <div style={{ fontSize: 20, fontWeight: 700, color: C.red }}>{player.losses}</div>
-            <div style={{ fontSize: 11, color: C.muted }}>Défaites</div>
-          </div>
-          <div style={{ background: C.surface, borderRadius: 8, padding: 10, textAlign: "center" }}>
-            <div style={{ fontSize: 20, fontWeight: 700, color: C.accent }}>{winRate}%</div>
-            <div style={{ fontSize: 11, color: C.muted }}>Win rate</div>
-          </div>
-        </div>
-
-        {/* Jeux gagnés / perdus */}
-        {player.played > 0 && (() => {
-          const diff = (player.gamesW || 0) - (player.gamesL || 0);
-          const diffColor = diff > 0 ? C.green : diff < 0 ? C.red : C.muted;
-          return (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
-              <div style={{ background: C.surface, borderRadius: 8, padding: 10, textAlign: "center" }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: C.green }}>{player.gamesW || 0}</div>
-                <div style={{ fontSize: 11, color: C.muted }}>Jeux gagnés</div>
-              </div>
-              <div style={{ background: C.surface, borderRadius: 8, padding: 10, textAlign: "center" }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: C.red }}>{player.gamesL || 0}</div>
-                <div style={{ fontSize: 11, color: C.muted }}>Jeux perdus</div>
-              </div>
-              <div style={{ background: C.surface, borderRadius: 8, padding: 10, textAlign: "center" }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: diffColor }}>{diff > 0 ? "+" : ""}{diff}</div>
-                <div style={{ fontSize: 11, color: C.muted }}>Différentiel</div>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Streak */}
-        {player.streak >= 2 && (
-          <div style={{ marginBottom: 14 }}>
-            <StreakBadge streak={player.streak} streakType={player.streakType} />
-          </div>
-        )}
-
-        {/* 5 derniers matchs */}
+        {/* ── 5 derniers matchs ── */}
         {player.last5 && player.last5.length > 0 && (
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 }}>
-            <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1, marginBottom: 8 }}>5 DERNIERS MATCHS</div>
-            <div style={{ display: "flex", gap: 6 }}>
-              {player.last5.map((r, i) => (
-                <div key={i} style={{
-                  width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
-                  background: r === "W" ? C.green + "22" : C.red + "22",
-                  border: `2px solid ${r === "W" ? C.green : C.red}`,
-                  fontFamily: "'Bebas Neue'", fontSize: 18, color: r === "W" ? C.green : C.red, fontWeight: 700
-                }}>{r}</div>
+          <>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.muted, marginBottom: 8 }}>DERNIERS MATCHS</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+              {player.last5.map((m, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, border: `1px solid ${m.won ? C.green + "33" : C.red + "33"}`, borderRadius: 8, padding: "8px 12px" }}>
+                  <span style={{
+                    width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+                    background: (m.won ? C.green : C.red) + "22", color: m.won ? C.green : C.red,
+                    fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center"
+                  }}>{m.won ? "V" : "D"}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: C.muted }}>avec <span style={{ color: C.textSub, fontWeight: 600 }}>{m.partner}</span></div>
+                    <div style={{ fontSize: 11.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>vs {m.opp1} / {m.opp2}</div>
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 13, color: m.won ? C.green : C.red }}>{m.setsTxt}</div>
+                    <div style={{ fontSize: 9, color: C.muted }}>{m.dateTxt}</div>
+                  </div>
+                </div>
               ))}
             </div>
-          </div>
+          </>
         )}
 
-        {/* Performance par format */}
-        {player.formats && (() => {
-          const fmtEntries = [
-            { key: "2-0", label: "2-0", icon: "⚡" },
-            { key: "2-1", label: "2-1", icon: "💪" },
-            { key: "STB", label: "STB", icon: "🎯" },
-            { key: "1set", label: "1 set", icon: "⚡" },
-          ].filter(f => (player.formats[f.key].w + player.formats[f.key].l) > 0);
-          if (fmtEntries.length === 0) return null;
-          return (
-            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 }}>
-              <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1, marginBottom: 8 }}>PERFORMANCE PAR FORMAT</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {fmtEntries.map(f => {
-                  const { w, l } = player.formats[f.key];
-                  const total = w + l;
-                  const pct = Math.round(w / total * 100);
-                  const color = pct >= 60 ? C.green : pct >= 40 ? C.accent : C.red;
-                  return (
-                    <div key={f.key} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: C.muted, width: 32, textAlign: "center",
-                        background: C.card, border: `1px solid ${C.border}`, borderRadius: 4, padding: "2px 0" }}>{f.label}</span>
-                      <div style={{ flex: 1, height: 6, background: "#ffffff15", borderRadius: 3, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: pct + "%", background: color, borderRadius: 3 }} />
-                      </div>
-                      <span style={{ fontSize: 12, color, fontWeight: 600, minWidth: 40, textAlign: "right" }}>{w}V/{l}D</span>
-                      <span style={{ fontSize: 12, color, fontWeight: 700, minWidth: 34, textAlign: "right" }}>{pct}%</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Partner / Rival */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {/* ── Relations ── */}
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.muted, marginBottom: 8 }}>RELATIONS</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
           {player.bestPartner && (
-            <StatPill icon="🤝" label="Partenaire favori" value={`${player.bestPartner.name} (${player.bestPartner.total} matchs ensemble)`} color={C.green} />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, borderRadius: 8, padding: "8px 12px" }}>
+              <span style={{ fontSize: 16 }}>🤝</span>
+              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 96, flexShrink: 0 }}>PARTENAIRE FAVORI</span>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: C.green }}>{player.bestPartner.name} ({player.bestPartner.total} matchs ensemble)</span>
+            </div>
           )}
           {player.rival && (
-            <StatPill icon="⚔️" label="Rival" value={`${player.rival.name} (${player.rival.total} confrontations · ${player.rival.w}V/${player.rival.total - player.rival.w}D)`} color={C.accent} />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, borderRadius: 8, padding: "8px 12px" }}>
+              <span style={{ fontSize: 16 }}>⚔️</span>
+              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 96, flexShrink: 0 }}>RIVAL</span>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: C.accent }}>{player.rival.name} ({player.rival.total} confrontations · {player.rival.w}V-{player.rival.total - player.rival.w}D)</span>
+            </div>
           )}
           {player.beteNoire && (
-            <StatPill icon="💀" label="Bête noire" value={`${player.beteNoire.name} (${player.beteNoire.w}V/${player.beteNoire.total - player.beteNoire.w}D)`} color={C.red} />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, borderRadius: 8, padding: "8px 12px" }}>
+              <span style={{ fontSize: 16 }}>💀</span>
+              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 96, flexShrink: 0 }}>BÊTE NOIRE</span>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: C.red }}>{player.beteNoire.name} ({player.beteNoire.w}V-{player.beteNoire.total - player.beteNoire.w}D)</span>
+            </div>
           )}
           {player.victime && (
-            <StatPill icon="😏" label="Victime favorite" value={`${player.victime.name} (${player.victime.w}V/${player.victime.total - player.victime.w}D)`} color={C.blue} />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, borderRadius: 8, padding: "8px 12px" }}>
+              <span style={{ fontSize: 16 }}>😏</span>
+              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 96, flexShrink: 0 }}>VICTIME FAVORITE</span>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: C.blue }}>{player.victime.name} ({player.victime.w}V-{player.victime.total - player.victime.w}D)</span>
+            </div>
           )}
           {!player.bestPartner && !player.rival && (
             <p style={{ fontSize: 12, color: C.muted }}>Pas encore de matchs pour ces stats.</p>
@@ -726,6 +755,7 @@ function PlayerModal({ player, qualifiedOnly, onClose }) {
     </div>
   );
 }
+
 
 function MiniSparklineWide({ history }) {
   if (history.length < 2) return null;
@@ -764,7 +794,7 @@ export default function PadelTracker() {
   const [flash, setFlash] = useState(null);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [h2hA, setH2hA] = useState("");
-  const [showOnlyQualified, setShowOnlyQualified] = useState(false);
+  const [showOnlyQualified, setShowOnlyQualified] = useState(true);
   const [activeRecord, setActiveRecord] = useState(null);
   const [selectedDuo, setSelectedDuo] = useState(null);
   const [adminCode, setAdminCode] = useState(() => { try { return localStorage.getItem(ADMIN_CODE_STORAGE) || ""; } catch { return ""; } });
@@ -772,6 +802,7 @@ export default function PadelTracker() {
   const [cloudEmpty, setCloudEmpty] = useState(false);
   const [cloudError, setCloudError] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [showRules, setShowRules] = useState(false);
   const [h2hB, setH2hB] = useState("");
 
   const DEFAULT_DATA = {
@@ -786,6 +817,7 @@ export default function PadelTracker() {
       { id: "p8", name: "Thomas Andreani" },
       { id: "p9", name: "Ficello" },
       { id: "p10", name: "Petru Pa" },
+      { id: "p11", name: "JB Cozzani" },
       { id: "guest", name: "Invité" },
     ],
     // Matches ordered chronologically; same-day matches get +1h per match to preserve ELO order
@@ -867,6 +899,22 @@ export default function PadelTracker() {
         date: "2026-07-03T19:00:00.000Z",
         a1: "p1", a2: "p9", b1: "p3", b2: "p6",
         sets: [{ a: 7, b: 5 }],
+        superTieBreak: false,
+        note: ""
+      },
+      {
+        id: "m11",
+        date: "2026-07-08T17:00:00.000Z",
+        a1: "p2", a2: "p3", b1: "p11", b2: "p4",
+        sets: [{ a: 3, b: 6 }, { a: 3, b: 6 }],
+        superTieBreak: false,
+        note: ""
+      },
+      {
+        id: "m12",
+        date: "2026-07-08T18:00:00.000Z",
+        a1: "p3", a2: "p4", b1: "p2", b2: "p11",
+        sets: [{ a: 0, b: 6 }, { a: 0, b: 6 }],
         superTieBreak: false,
         note: ""
       },
@@ -979,7 +1027,7 @@ export default function PadelTracker() {
     { id: "duos", label: "Duos", icon: "🤝" },
     { id: "h2h", label: "Face à Face", icon: "⚔️" },
     { id: "records", label: "Records", icon: "⭐" },
-    { id: "reigns", label: "Règnes", icon: "👑" },
+    { id: "reigns", label: "Palmarès", icon: "👑" },
     { id: "match", label: "+ Match", icon: "➕" },
     { id: "history", label: "Historique", icon: "📋" },
     { id: "players", label: "Joueurs", icon: "👤" },
@@ -1068,30 +1116,6 @@ export default function PadelTracker() {
             const days = lastDate ? Math.floor((new Date() - lastDate) / 86400000) : null;
             const daysColor = days === null ? C.muted : days <= 7 ? C.green : days <= 21 ? C.accent : C.red;
 
-            // ── Commentaire d'évolution depuis le dernier match ──
-            const movers = qualified.filter(p => p.rankMove !== 0);
-            let headline = "Le classement n'a pas bougé lors du dernier match.";
-            const topRank = p => p.currentRank;
-            if (movers.length > 0) {
-              const up = movers.filter(p => p.rankMove > 0).sort((a, b) => b.rankMove - a.rankMove);
-              const down = movers.filter(p => p.rankMove < 0).sort((a, b) => a.rankMove - b.rankMove);
-              const dethroned = movers.find(p => (topRank(p) - p.rankMove) === 1 && p.rankMove < 0);
-              const crowned = movers.find(p => topRank(p) === 1 && p.rankMove > 0);
-              if (crowned) {
-                const deltaTxt = crowned.lastDelta !== null && crowned.lastDelta !== undefined ? ` (+${Math.abs(crowned.lastDelta)} ELO)` : "";
-                headline = `${crowned.name} s'empare de la 1ère place${deltaTxt}` + (dethroned ? ` — ${dethroned.name} cède le trône et glisse au rang ${topRank(dethroned)}.` : ".");
-              } else if (up[0] && (!down[0] || up[0].rankMove >= -down[0].rankMove)) {
-                headline = `${up[0].name} grimpe de ${up[0].rankMove} place${up[0].rankMove > 1 ? "s" : ""} et pointe au rang ${topRank(up[0])}.`;
-              } else if (down[0]) {
-                headline = `${down[0].name} glisse de ${-down[0].rankMove} place${-down[0].rankMove > 1 ? "s" : ""} et retombe au rang ${topRank(down[0])}.`;
-              }
-            }
-            const moveLine = movers.length > 0
-              ? movers.sort((a, b) => b.rankMove - a.rankMove).map(p =>
-                  `${p.rankMove > 0 ? "▲" : "▼"} ${p.name.split(" ")[0]} ${p.rankMove > 0 ? "+" : "−"}${Math.abs(p.rankMove)}`
-                ).join(" · ")
-              : null;
-
             // ── Stats du jour (pool + rotation quotidienne) ──
             const q3 = qualified;
             const gamePctA = p => (p.gamesW + p.gamesL) > 0 ? p.gamesW / (p.gamesW + p.gamesL) : 0;
@@ -1175,12 +1199,40 @@ export default function PadelTracker() {
                   </div>
                 </div>
 
-                {/* Depuis le dernier match */}
-                <div style={{ background: C.card, border: `1px solid ${C.accent}44`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
-                  <div style={{ fontSize: 10, letterSpacing: 2, color: C.accent, fontWeight: 700, marginBottom: 6 }}>⚡ DEPUIS LE DERNIER MATCH</div>
-                  <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>{headline}</div>
-                  {moveLine && <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>{moveLine}</div>}
-                </div>
+                {/* Dernier match */}
+                {(() => {
+                  const sortedM = [...matches].map((m, i) => ({ ...m, _idx: i })).sort((a, b) => new Date(a.date) - new Date(b.date) || a._idx - b._idx);
+                  const lm = sortedM[sortedM.length - 1];
+                  if (!lm) return null;
+                  const aS = lm.sets.filter(s => s.a > s.b).length;
+                  const bS = lm.sets.filter(s => s.b > s.a).length;
+                  const aWin = aS > bS;
+                  const winners = aWin ? [lm.a1, lm.a2] : [lm.b1, lm.b2];
+                  const losers = aWin ? [lm.b1, lm.b2] : [lm.a1, lm.a2];
+                  const setsTxt = lm.sets.map(s => aWin ? `${s.a}-${s.b}` : `${s.b}-${s.a}`).join(" · ");
+                  const dateTxt = new Date(lm.date).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+                  return (
+                    <div style={{ background: C.card, border: `1px solid ${C.accent}44`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <span style={{ fontSize: 10, letterSpacing: 2, color: C.accent, fontWeight: 700 }}>🎾 DERNIER MATCH</span>
+                        <span style={{ fontSize: 10, color: C.muted }}>{dateTxt}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: C.green }}>
+                            {pNameA(winners[0])} / {pNameA(winners[1])} <span style={{ fontSize: 11 }}>✓</span>
+                          </div>
+                          <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>
+                            {pNameA(losers[0])} / {pNameA(losers[1])}
+                          </div>
+                        </div>
+                        <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 18, color: C.text, flexShrink: 0, textAlign: "right" }}>
+                          {setsTxt}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Stats du jour */}
                 {picks.length > 0 && (
@@ -1260,14 +1312,13 @@ export default function PadelTracker() {
           {tab === "ranking" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
-              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.muted, display: "flex", gap: 16, flexWrap: "wrap" }}>
-                <span>⚡ <b style={{ color: C.text }}>ELO</b> — départ 1000 pts</span>
-                <span>K=32 · <span style={{ color: C.accent }}>1-0 = ×0.70</span> · <span style={{ color: C.green }}>2-0 = ×1.0</span> · <span style={{ color: C.textSub }}>2-1 = ×0.85</span> · <span style={{ color: C.muted }}>STB = ×0.70</span></span>
-                <span style={{ color: C.accent }}>★ {MIN_MATCHES}+ matchs pour être classé · Appuie sur un joueur pour ses stats</span>
-              </div>
-
-              {/* Toggle qualifiés */}
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              {/* Ligne info + toggle */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <button onClick={() => setShowRules(true)} className="tile-press"
+                  style={{ background: C.card, border: `1px solid ${C.border}`, color: C.muted, fontSize: 11, padding: "6px 10px", borderRadius: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 15, height: 15, borderRadius: "50%", border: `1px solid ${C.accent}`, color: C.accent, fontSize: 10, display: "inline-flex", alignItems: "center", justifyContent: "center", fontStyle: "italic", fontWeight: 700 }}>i</span>
+                  Règles ELO
+                </button>
                 <div onClick={() => setShowOnlyQualified(v => !v)}
                   style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
                     background: showOnlyQualified ? C.accent + "18" : C.surface,
@@ -1279,7 +1330,7 @@ export default function PadelTracker() {
                       width: 14, height: 14, borderRadius: "50%", background: "#fff", transition: "left .2s" }} />
                   </div>
                   <span style={{ fontSize: 12, fontWeight: 600, color: showOnlyQualified ? C.accent : C.muted, whiteSpace: "nowrap" }}>
-                    Qualifiés uniquement (3+ matchs)
+                    Qualifiés (3+ matchs)
                   </span>
                 </div>
               </div>
@@ -1289,8 +1340,8 @@ export default function PadelTracker() {
               )}
 
               {eloStats.length > 0 && (
-                <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 50px 50px 60px", gap: 8, padding: "4px 12px", fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1 }}>
-                  <span>#</span><span>Joueur</span><span style={{ textAlign: "center" }}>V/D</span><span style={{ textAlign: "center" }}>J</span><span style={{ textAlign: "right" }}>ELO</span>
+                <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 46px 46px 58px", gap: 8, padding: "4px 12px", fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>
+                  <span>#</span><span>JOUEUR</span><span style={{ textAlign: "center" }}>V-D</span><span style={{ textAlign: "center" }}>WIN%</span><span style={{ textAlign: "right" }}>ELO</span>
                 </div>
               )}
 
@@ -1305,7 +1356,7 @@ export default function PadelTracker() {
                       onClick={() => setSelectedPlayer(p)}
                       className="tile-press"
                       style={{
-                        display: "grid", gridTemplateColumns: "30px 1fr 50px 50px 60px", gap: 8, alignItems: "center",
+                        display: "grid", gridTemplateColumns: "30px 1fr 46px 46px 58px", gap: 8, alignItems: "center",
                         background: glowColor ? `linear-gradient(135deg, ${glowColor}12, ${C.card})` : C.card,
                         border: `1px solid ${glowColor ? glowColor + "55" : qualified ? C.border : C.border + "55"}`,
                         borderRadius: 8, padding: "10px 12px", opacity: qualified ? 1 : 0.6, cursor: "pointer",
@@ -1314,31 +1365,34 @@ export default function PadelTracker() {
                       <Rank n={i + 1} qualified={qualified} />
                       <div style={{ minWidth: 0, overflow: "hidden" }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: qualified ? C.text : C.muted }}>{p.name}</div>
-                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2, flexWrap: "wrap" }}>
-                          {p.rankMove !== 0 && qualified && (
-                            <span style={{
-                              fontSize: 10, fontWeight: 700,
-                              color: p.rankMove > 0 ? C.green : C.red,
-                              background: p.rankMove > 0 ? C.green + "18" : C.red + "18",
-                              border: `1px solid ${p.rankMove > 0 ? C.green + "44" : C.red + "44"}`,
-                              borderRadius: 4, padding: "1px 5px",
-                            }}>
-                              {p.rankMove > 0 ? `▲${p.rankMove}` : `▼${Math.abs(p.rankMove)}`}
-                            </span>
-                          )}
-                          {p.played < MIN_MATCHES
-                            ? <span style={{ fontSize: 10, color: C.muted }}>{p.played}/{MIN_MATCHES} matchs</span>
-                            : p.lastDelta !== null && <EloDelta delta={p.lastDelta} />
-                          }
-                          {p.streak >= 2 && <StreakBadge streak={p.streak} streakType={p.streakType} />}
-                        </div>
+                        {(p.rankMove !== 0 && qualified) || p.played < MIN_MATCHES || p.streak >= 2 ? (
+                          <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2, flexWrap: "wrap" }}>
+                            {p.rankMove !== 0 && qualified && (
+                              <span style={{
+                                fontSize: 10, fontWeight: 700,
+                                color: p.rankMove > 0 ? C.green : C.red,
+                                background: p.rankMove > 0 ? C.green + "18" : C.red + "18",
+                                border: `1px solid ${p.rankMove > 0 ? C.green + "44" : C.red + "44"}`,
+                                borderRadius: 4, padding: "1px 5px",
+                              }}>
+                                {p.rankMove > 0 ? `▲${p.rankMove}` : `▼${Math.abs(p.rankMove)}`}
+                              </span>
+                            )}
+                            {p.played < MIN_MATCHES && (
+                              <span style={{ fontSize: 10, color: C.muted }}>{p.played}/{MIN_MATCHES} matchs</span>
+                            )}
+                            {p.streak >= 2 && <StreakBadge streak={p.streak} streakType={p.streakType} />}
+                          </div>
+                        ) : null}
                       </div>
-                      <span style={{ textAlign: "center", fontSize: 13 }}>
+                      <span style={{ textAlign: "center", fontSize: 12, fontWeight: 600 }}>
                         <span style={{ color: C.green }}>{p.wins}</span>
-                        <span style={{ color: C.muted }}>/</span>
+                        <span style={{ color: C.muted }}>-</span>
                         <span style={{ color: C.red }}>{p.losses}</span>
                       </span>
-                      <span style={{ textAlign: "center", fontSize: 13, color: C.muted }}>{p.played}</span>
+                      <span style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: p.played > 0 ? (Math.round(p.wins/p.played*100) >= 60 ? C.green : Math.round(p.wins/p.played*100) >= 40 ? C.accent : C.red) : C.muted }}>
+                        {p.played > 0 ? Math.round(p.wins/p.played*100) + "%" : "—"}
+                      </span>
                       <span style={{ textAlign: "right", fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 21, color: qualified ? C.accent : C.muted }}>
                         {p.elo}
                       </span>
@@ -1349,8 +1403,26 @@ export default function PadelTracker() {
 
               {!showOnlyQualified && eloStats.some(p => p.played < MIN_MATCHES) && (
                 <p style={{ fontSize: 11, color: C.muted, textAlign: "center" }}>
-                  Les joueurs grisés n'ont pas encore joué de match.
+                  Les joueurs grisés ne sont pas encore qualifiés (3+ matchs).
                 </p>
+              )}
+
+              {/* Modal règles ELO */}
+              {showRules && (
+                <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 200, display: "flex", alignItems: "flex-end" }} onClick={() => setShowRules(false)}>
+                  <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: "16px 16px 0 0", padding: 20 }} onClick={e => e.stopPropagation()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                      <span style={{ fontFamily: "'Bebas Neue'", fontSize: 18, letterSpacing: 2, color: C.accent }}>RÈGLES DU CLASSEMENT</span>
+                      <button onClick={() => setShowRules(false)} style={{ background: C.border, color: C.muted, padding: "4px 10px", fontSize: 13 }}>✕</button>
+                    </div>
+                    <div style={{ fontSize: 13, color: C.textSub, lineHeight: 1.8 }}>
+                      <b style={{ color: C.text }}>ELO</b> — tout le monde démarre à 1000 pts. On gagne/perd des points selon le résultat et la force de l'adversaire (K=32). Battre plus fort rapporte plus.<br/>
+                      <b style={{ color: C.text }}>Multiplicateurs</b> — 2 sets secs : ×1.0 · 3 sets : ×0.85 · super tie-break : ×0.70 · 1 set : ×0.70.<br/>
+                      <b style={{ color: C.text }}>Qualification</b> — minimum {MIN_MATCHES} matchs joués pour être classé.<br/>
+                      <b style={{ color: C.text }}>Badges</b> — ▲▼ places gagnées/perdues au dernier match · 🔥 série de victoires · ❄️ série de défaites.
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -1962,8 +2034,99 @@ export default function PadelTracker() {
               <p style={{ color: C.muted, fontSize: 13 }}>Pas encore de matchs enregistrés.</p>
             );
 
+            // ── Joueur du mois ──
+            const monthlyAll = computeMonthly(players, matches);
+            const monthKeys = Object.keys(monthlyAll).sort();
+            const nowMonth = new Date().toISOString().slice(0, 7);
+            const currentRace = monthlyAll[nowMonth] || null;
+            const pastMonths = monthKeys.filter(m => m < nowMonth).reverse();
+            const monthLabel = m => {
+              const [y, mo] = m.split("-");
+              const noms = ["", "Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+              return `${noms[parseInt(mo)]} ${y}`;
+            };
+            const daysLeft = (() => {
+              const now = new Date();
+              const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+              return end.getDate() - now.getDate();
+            })();
             return (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+                {/* ═══ JOUEUR DU MOIS ═══ */}
+                <Section title="🏆 JOUEUR DU MOIS" />
+                <div style={{ fontSize: 10, color: C.muted, marginTop: -4 }}>
+                  Score = ΔELO + 3×victoires + (% jeux − 50)÷2 · min. 2 matchs dans le mois
+                </div>
+
+                {currentRace && (
+                  <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: C.text }}>COURSE — {monthLabel(nowMonth).toUpperCase()}</span>
+                      <span style={{ fontSize: 10, color: C.green }}>● En cours · {daysLeft} jour{daysLeft > 1 ? "s" : ""} restant{daysLeft > 1 ? "s" : ""}</span>
+                    </div>
+                    {currentRace.slice(0, 5).map((r, i) => {
+                      const rc = ["#c8a84b", "#9eaebd", "#c07a3a"][i] || null;
+                      return (
+                        <div key={r.id} style={{
+                          display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", marginBottom: 6,
+                          background: rc ? `linear-gradient(135deg, ${rc}10, ${C.surface})` : C.surface,
+                          border: `1px solid ${rc ? rc + "44" : C.border}`, borderRadius: 8
+                        }}>
+                          <span style={{
+                            width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
+                            background: rc || "transparent", border: rc ? "none" : `1px solid ${C.border}`,
+                            color: rc ? "#080E0A" : C.muted, fontSize: 11, fontWeight: 700,
+                            display: "inline-flex", alignItems: "center", justifyContent: "center"
+                          }}>{i + 1}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600 }}>{pName(r.id)}</div>
+                            <div style={{ fontSize: 10, color: C.muted }}>ΔELO {r.dElo >= 0 ? "+" : ""}{r.dElo} · {r.wins}V/{r.played}m · {r.pct}% jeux</div>
+                          </div>
+                          <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 19, color: r.score >= 0 ? C.accent : C.red }}>{r.score}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {!currentRace && (
+                  <p style={{ fontSize: 12, color: C.muted }}>Aucun joueur avec 2+ matchs ce mois-ci — la course démarrera au prochain match.</p>
+                )}
+
+                {pastMonths.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: C.muted, marginTop: 4 }}>PALMARÈS</div>
+                    {pastMonths.map(month => {
+                      const winner = monthlyAll[month][0];
+                      return (
+                        <div key={month} className="tile-press"
+                          onClick={() => setActiveRecord({
+                            icon: "🏆", title: `JOUEUR DU MOIS — ${monthLabel(month).toUpperCase()}`, color: C.accent,
+                            detail: <Top3 valueColor={C.accent} entries={monthlyAll[month].slice(0, 3).map(r => ({
+                              label: `${pName(r.id)} (ΔELO ${r.dElo >= 0 ? "+" : ""}${r.dElo} · ${r.wins}V/${r.played}m · ${r.pct}% jeux)`,
+                              value: `${r.score}`
+                            }))} />
+                          })}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 12, cursor: "pointer",
+                            background: `linear-gradient(135deg, ${C.accent}10, ${C.card})`,
+                            border: `1px solid ${C.accent}44`, borderRadius: 10, padding: "12px 14px"
+                          }}>
+                          <span style={{ fontSize: 22 }}>🏆</span>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>{monthLabel(month).toUpperCase()}</div>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: C.accent }}>{pName(winner.id)}</div>
+                          </div>
+                          <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 18, color: C.accent }}>{winner.score}</span>
+                          <span style={{ fontSize: 14, color: C.muted }}>›</span>
+                        </div>
+                      );
+                    })}
+                    <div style={{ fontSize: 10, color: C.muted, textAlign: "center" }}>Appuie sur un mois pour voir le podium complet</div>
+                  </>
+                )}
+
+
                 {(() => {
                   const reigns = eloStats.reigns;
                   const current = reigns[reigns.length - 1];
@@ -2356,7 +2519,17 @@ export default function PadelTracker() {
       </div>
 
       {/* Player modal */}
-      <PlayerModal player={selectedPlayer} qualifiedOnly={showOnlyQualified} onClose={() => setSelectedPlayer(null)} />
+      <PlayerModal player={selectedPlayer} qualifiedOnly={showOnlyQualified}
+        monthTitles={(() => {
+          if (!selectedPlayer) return [];
+          const monthlyAll = computeMonthly(players, matches);
+          const nowMonth = new Date().toISOString().slice(0, 7);
+          const noms = ["", "Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+          return Object.keys(monthlyAll).sort()
+            .filter(m => m < nowMonth && monthlyAll[m][0].id === selectedPlayer.id)
+            .map(m => `${noms[parseInt(m.split("-")[1])]} ${m.split("-")[0]}`);
+        })()}
+        onClose={() => setSelectedPlayer(null)} />
     </>
   );
 }
