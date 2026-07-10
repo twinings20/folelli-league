@@ -37,21 +37,38 @@ const ELO_START = 1000;
 const K = 32;
 const MIN_MATCHES = 3;
 
-const STORAGE_KEY = "padel_data_v2";
-const DATA_VERSION = 3; // ⬆️ Incrémenté à chaque mise à jour officielle des données
+// ─── Supabase (données partagées en ligne) ───────────────────────────────────
+const SUPABASE_URL = "https://xxjbhyxfkhxufisfuspk.supabase.co";
+const SUPABASE_KEY = "sb_publishable_lK2zV4x6xnvJZ4ts5z-Gow_iPwH22tO";
+const ADMIN_CODE_STORAGE = "folelli_admin_code";
 
-async function loadFromStorage() {
+async function loadFromCloud() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return { players: [], matches: [] };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/league_data?id=eq.main&select=data`, {
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) return { data: null, error: true };
+    const rows = await res.json();
+    if (Array.isArray(rows) && rows[0]?.data?.players) return { data: rows[0].data, error: false };
+    return { data: null, error: false }; // base vide (pas encore initialisée)
+  } catch {
+    return { data: null, error: true };
+  }
 }
 
-async function saveToStorage(data) {
+async function saveToCloud(adminCode, data) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch {}
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/save_league_data`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ admin_code: adminCode, new_data: data })
+    });
+    if (!res.ok) return false;
+    const ok = await res.json();
+    return ok === true;
+  } catch {
+    return false;
+  }
 }
 
 function eloExpected(rA, rB) {
@@ -750,6 +767,11 @@ export default function PadelTracker() {
   const [showOnlyQualified, setShowOnlyQualified] = useState(false);
   const [activeRecord, setActiveRecord] = useState(null);
   const [selectedDuo, setSelectedDuo] = useState(null);
+  const [adminCode, setAdminCode] = useState(() => { try { return localStorage.getItem(ADMIN_CODE_STORAGE) || ""; } catch { return ""; } });
+  const [adminInput, setAdminInput] = useState("");
+  const [cloudEmpty, setCloudEmpty] = useState(false);
+  const [cloudError, setCloudError] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [h2hB, setH2hB] = useState("");
 
   const DEFAULT_DATA = {
@@ -869,14 +891,14 @@ export default function PadelTracker() {
   };
 
   useEffect(() => {
-    loadFromStorage().then(d => {
-      if (!d.players || d.players.length === 0 || d.__v !== DATA_VERSION) {
-        // Première visite OU nouvelles données officielles déployées → on repart des données officielles
-        const fresh = { ...DEFAULT_DATA, __v: DATA_VERSION };
-        saveToStorage(fresh);
-        setData(fresh);
+    loadFromCloud().then(({ data: cloud, error }) => {
+      if (cloud) {
+        setData(cloud);
       } else {
-        setData(d);
+        // Base vide ou erreur réseau → données locales par défaut (lecture seule tant que non publiées)
+        setData(DEFAULT_DATA);
+        if (!error) setCloudEmpty(true);
+        if (error) setCloudError(true);
       }
       setLoading(false);
     });
@@ -885,7 +907,42 @@ export default function PadelTracker() {
   const { players, matches } = data;
   const eloStats = computeElo(players, matches);
 
-  function persist(next) { setData(next); saveToStorage(next); }
+  const isAdmin = adminCode.length > 0;
+
+  function persist(next) {
+    if (!isAdmin) {
+      setFlash("🔒 Mode lecture — entre le code admin dans l'onglet Joueurs.");
+      setTimeout(() => setFlash(null), 3500);
+      return false;
+    }
+    setData(next);
+    setSyncing(true);
+    saveToCloud(adminCode, next).then(ok => {
+      setSyncing(false);
+      if (ok) {
+        setCloudEmpty(false);
+      } else {
+        setFlash("⚠️ Échec de synchronisation — code admin invalide ou réseau. Modif non enregistrée en ligne !");
+        setTimeout(() => setFlash(null), 4000);
+      }
+    });
+    return true;
+  }
+
+  function unlockAdmin() {
+    const code = adminInput.trim();
+    if (!code) return;
+    setAdminCode(code);
+    try { localStorage.setItem(ADMIN_CODE_STORAGE, code); } catch {}
+    setAdminInput("");
+    setFlash("✓ Mode admin activé sur cet appareil.");
+    setTimeout(() => setFlash(null), 2500);
+  }
+
+  function lockAdmin() {
+    setAdminCode("");
+    try { localStorage.removeItem(ADMIN_CODE_STORAGE); } catch {}
+  }
 
   function addPlayer() {
     const name = newPlayer.trim();
@@ -923,7 +980,7 @@ export default function PadelTracker() {
       setFlash("Remplis tous les scores."); setTimeout(() => setFlash(null), 3000); return;
     }
     const match = { id: uid(), date: new Date().toISOString(), a1, a2, b1, b2, sets: parsedSets, superTieBreak: matchForm.superTieBreak, note };
-    persist({ ...data, matches: [match, ...matches] });
+    if (!persist({ ...data, matches: [match, ...matches] })) return;
     setMatchForm({ a1: "", a2: "", b1: "", b2: "", sets: [{ a: "", b: "" }, { a: "", b: "" }], superTieBreak: false, note: "" });
     setFlash("✓ Match enregistré !"); setTimeout(() => setFlash(null), 2000);
     setTab("ranking");
@@ -949,8 +1006,8 @@ export default function PadelTracker() {
     <>
       <style>{css}</style>
       <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
-        <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 28, letterSpacing: 4, color: C.accent }}>PADEL TRACKER</div>
-        <div style={{ color: C.muted, fontSize: 13 }}>Chargement des données...</div>
+        <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 28, letterSpacing: 4, color: C.accent }}>FOLELLI LEAGUE</div>
+        <div style={{ color: C.muted, fontSize: 13 }}>Connexion à la ligue…</div>
       </div>
     </>
   );
@@ -2261,6 +2318,36 @@ export default function PadelTracker() {
           {tab === "players" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <h2 style={{ fontFamily: "'Bebas Neue'", fontSize: 20, letterSpacing: 2, color: C.accent }}>GÉRER LES JOUEURS</h2>
+
+              {/* ── Carte admin ── */}
+              <div style={{ background: C.card, border: `1px solid ${isAdmin ? C.green + "66" : C.border}`, borderRadius: 10, padding: 14 }}>
+                {isAdmin ? (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.green }}>🔓 Mode admin actif</div>
+                      <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Tes modifications sont publiées en ligne pour tout le monde.</div>
+                    </div>
+                    <button onClick={lockAdmin} style={{ background: C.border, color: C.muted, padding: "8px 12px", fontSize: 12, flexShrink: 0 }}>Verrouiller</button>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.muted, marginBottom: 8 }}>🔒 Mode lecture</div>
+                    <div style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>Le site est consultable par tous. Pour ajouter des matchs ou des joueurs, entre le code admin.</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input type="password" placeholder="Code admin" value={adminInput} onChange={e => setAdminInput(e.target.value)} onKeyDown={e => e.key === "Enter" && unlockAdmin()} />
+                      <button onClick={unlockAdmin} style={{ background: C.accent, color: "#080E0A", padding: "8px 16px", whiteSpace: "nowrap" }}>Déverrouiller</button>
+                    </div>
+                  </div>
+                )}
+                {isAdmin && cloudEmpty && (
+                  <button onClick={() => persist({ ...data })}
+                    style={{ marginTop: 10, width: "100%", background: C.accent, color: "#080E0A", padding: "10px", fontSize: 13, fontWeight: 700 }}>
+                    📤 Publier les données initiales sur le cloud
+                  </button>
+                )}
+                {syncing && <div style={{ fontSize: 11, color: C.accent, marginTop: 8 }}>⏳ Synchronisation…</div>}
+                {cloudError && <div style={{ fontSize: 11, color: C.red, marginTop: 8 }}>⚠️ Connexion au cloud impossible — données par défaut affichées.</div>}
+              </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <input placeholder="Nom du joueur" value={newPlayer} onChange={e => setNewPlayer(e.target.value)} onKeyDown={e => e.key === "Enter" && addPlayer()} />
                 <button onClick={addPlayer} style={{ background: C.accent, color: "#080E0A", padding: "8px 16px", whiteSpace: "nowrap" }}>Ajouter</button>
