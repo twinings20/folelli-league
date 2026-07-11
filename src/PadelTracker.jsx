@@ -25,7 +25,9 @@ const css = `
   @keyframes crownGlow { 0%,100% { box-shadow: 0 0 8px #c8a84b33; } 50% { box-shadow: 0 0 20px #c8a84b88; } }
   .crown-glow { animation: crownGlow 2.5s ease-in-out infinite; }
   @keyframes slideUpM { from { transform: translateY(100%); } to { transform: translateY(0); } }
-  .slide-up { animation: slideUpM .3s cubic-bezier(.2,.8,.3,1) both; }
+  .slide-up { animation: popIn .22s cubic-bezier(.2,.8,.3,1) both; }
+  @keyframes popIn { from { opacity: 0; transform: scale(.96) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+  .sheet-up { animation: slideUpM .3s cubic-bezier(.2,.8,.3,1) both; }
   .tile-press { transition: transform .12s ease; }
   .tile-press:active { transform: scale(.96); }
   @keyframes fadeTab { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
@@ -658,9 +660,9 @@ function PlayerModal({ player, qualifiedOnly, monthTitles, calCount, onClose }) 
   ];
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 100, display: "flex", alignItems: "flex-end" }}
+    <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "14px 10px calc(100px + env(safe-area-inset-bottom))" }}
       onClick={onClose}>
-      <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: "16px 16px 0 0", padding: 20, maxHeight: "85vh", overflowY: "auto" }}
+      <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, maxHeight: "calc(100dvh - 150px)", overflowY: "auto" }}
         onClick={e => e.stopPropagation()}>
 
         {/* ── Tête ── */}
@@ -901,6 +903,7 @@ export default function PadelTracker() {
   const [showRules, setShowRules] = useState(false);
   const [palmaresView, setPalmaresView] = useState("mois");
   const [showAllMonths, setShowAllMonths] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [h2hB, setH2hB] = useState("");
 
   const DEFAULT_DATA = {
@@ -1119,17 +1122,20 @@ export default function PadelTracker() {
 
   const pName = id => players.find(p => p.id === id)?.name || "?";
 
-  const tabs = [
+  const mainTabs = [
     { id: "accueil", label: "Accueil", icon: "🏠" },
     { id: "ranking", label: "Classement", icon: "🏆" },
+    { id: "match", label: "Match", icon: "➕" },
+    { id: "reigns", label: "Palmarès", icon: "👑" },
+  ];
+  const moreTabs = [
     { id: "duos", label: "Duos", icon: "🤝" },
     { id: "h2h", label: "Face à Face", icon: "⚔️" },
     { id: "records", label: "Records", icon: "⭐" },
-    { id: "reigns", label: "Palmarès", icon: "👑" },
-    { id: "match", label: "+ Match", icon: "➕" },
     { id: "history", label: "Historique", icon: "📋" },
     { id: "players", label: "Joueurs", icon: "👤" },
   ];
+  const isMoreTab = moreTabs.some(t => t.id === tab);
 
   if (loading) return (
     <>
@@ -1184,21 +1190,7 @@ export default function PadelTracker() {
           </div>
         )}
 
-        {/* Tabs */}
-        <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, background: C.surface }}>
-          {tabs.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              style={{ flex: 1, padding: "8px 0", background: "transparent",
-                color: tab === t.id ? C.accent : C.muted,
-                borderBottom: tab === t.id ? `2px solid ${C.accent}` : "2px solid transparent",
-                borderRadius: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-              <span style={{ fontSize: 16 }}>{t.icon}</span>
-              <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5 }}>{t.label}</span>
-            </button>
-          ))}
-        </div>
-
-        <div key={tab} className="fade-tab" style={{ padding: 16, maxWidth: 640, margin: "0 auto" }}>
+        <div key={tab} className="fade-tab" style={{ padding: "16px 16px calc(90px + env(safe-area-inset-bottom))", maxWidth: 640, margin: "0 auto" }}>
 
           {/* ── CLASSEMENT ELO ── */}
           {/* ── ACCUEIL ── */}
@@ -1383,8 +1375,8 @@ export default function PadelTracker() {
 
                 {/* Modal top 3 stat du jour */}
                 {activeRecord && activeRecord.top3 && (
-                  <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 200, display: "flex", alignItems: "flex-end" }} onClick={() => setActiveRecord(null)}>
-                    <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: "16px 16px 0 0", padding: 20, maxHeight: "75vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+                  <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "14px 10px calc(100px + env(safe-area-inset-bottom))" }} onClick={() => setActiveRecord(null)}>
+                    <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, maxHeight: "calc(100dvh - 150px)", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <span style={{ fontSize: 24 }}>{activeRecord.icon}</span>
@@ -1507,8 +1499,8 @@ export default function PadelTracker() {
 
               {/* Modal règles ELO */}
               {showRules && (
-                <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 200, display: "flex", alignItems: "flex-end" }} onClick={() => setShowRules(false)}>
-                  <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: "16px 16px 0 0", padding: 20 }} onClick={e => e.stopPropagation()}>
+                <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "14px 10px calc(100px + env(safe-area-inset-bottom))" }} onClick={() => setShowRules(false)}>
+                  <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20 }} onClick={e => e.stopPropagation()}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                       <span style={{ fontFamily: "'Bebas Neue'", fontSize: 18, letterSpacing: 2, color: C.accent }}>RÈGLES DU CLASSEMENT</span>
                       <button onClick={() => setShowRules(false)} style={{ background: C.border, color: C.muted, padding: "4px 10px", fontSize: 13 }}>✕</button>
@@ -1601,9 +1593,9 @@ export default function PadelTracker() {
 
                 {/* Duo modal */}
                 {selectedDuo && (
-                  <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 150, display: "flex", alignItems: "flex-end" }}
+                  <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 150, display: "flex", alignItems: "center", justifyContent: "center", padding: "14px 10px calc(100px + env(safe-area-inset-bottom))" }}
                     onClick={() => setSelectedDuo(null)}>
-                    <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: "16px 16px 0 0", padding: 20, maxHeight: "80vh", overflowY: "auto" }}
+                    <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, maxHeight: "calc(100dvh - 150px)", overflowY: "auto" }}
                       onClick={e => e.stopPropagation()}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                         <span style={{ fontFamily: "'Bebas Neue'", fontSize: 20, letterSpacing: 2, color: C.text }}>{selectedDuo.label}</span>
@@ -1712,39 +1704,109 @@ export default function PadelTracker() {
 
           {/* ── FACE À FACE ── */}
           {tab === "h2h" && (() => {
-            // Compute h2h between two selected players
             const pName = id => players.find(p => p.id === id)?.name || "?";
-            const sorted = [...matches].sort((a, b) => new Date(b.date) - new Date(a.date));
+            const sortedAsc = [...matches].map((m, i) => ({ ...m, _idx: i })).sort((a, b) => new Date(a.date) - new Date(b.date) || a._idx - b._idx);
 
-            let wA = 0, wB = 0;
-            let h2hMatches = [];
+            let wA = 0, wB = 0, gA = 0, gB = 0;
+            let duels = []; // chronologique
 
             if (h2hA && h2hB && h2hA !== h2hB) {
-              h2hMatches = sorted.filter(m => {
+              duels = sortedAsc.filter(m => {
                 const inA = [m.a1, m.a2].includes(h2hA);
                 const inB = [m.b1, m.b2].includes(h2hA);
                 const oppInA = [m.a1, m.a2].includes(h2hB);
                 const oppInB = [m.b1, m.b2].includes(h2hB);
-                // both played but on opposite teams
                 return (inA && oppInB) || (inB && oppInA);
               });
-
-              h2hMatches.forEach(m => {
+              duels.forEach(m => {
                 const aSets = m.sets.filter(s => s.a > s.b).length;
                 const bSets = m.sets.filter(s => s.b > s.a).length;
                 const aWin = aSets > bSets;
                 const pAinA = [m.a1, m.a2].includes(h2hA);
-                if ((pAinA && aWin) || (!pAinA && !aWin)) wA++; else wB++;
+                const pAwon = (pAinA && aWin) || (!pAinA && !aWin);
+                if (pAwon) wA++; else wB++;
+                const real = m.superTieBreak ? m.sets.slice(0, -1) : m.sets;
+                real.forEach(s => {
+                  if (pAinA) { gA += s.a; gB += s.b; } else { gA += s.b; gB += s.a; }
+                });
               });
             }
 
             const total = wA + wB;
+            const sA = eloStats.find(p => p.id === h2hA);
+            const sB = eloStats.find(p => p.id === h2hB);
+
+            // ── Indice Folelli : 40% ELO · 25% duels · 20% jeux · 15% win rate ──
+            let indice = null;
+            if (sA && sB && h2hA !== h2hB) {
+              const pElo = 1 / (1 + Math.pow(10, (sB.elo - sA.elo) / 400));
+              const wrA = sA.played > 0 ? sA.wins / sA.played : 0.5;
+              const wrB = sB.played > 0 ? sB.wins / sB.played : 0.5;
+              const pWr = (wrA + wrB) > 0 ? wrA / (wrA + wrB) : 0.5;
+              let p;
+              if (total === 0) {
+                p = 0.70 * pElo + 0.30 * pWr;
+              } else {
+                const pH = (wA + 1) / (total + 2); // lissage
+                const pG = (gA + gB) > 0 ? gA / (gA + gB) : 0.5;
+                p = 0.40 * pElo + 0.25 * pH + 0.20 * pG + 0.15 * pWr;
+              }
+              indice = Math.round(p * 100);
+            }
+
+            // ── Verdict ──
+            let verdict = null;
+            if (total > 0) {
+              const last3 = duels.slice(-3).map(m => {
+                const aS = m.sets.filter(s => s.a > s.b).length;
+                const bS = m.sets.filter(s => s.b > s.a).length;
+                const pAinA = [m.a1, m.a2].includes(h2hA);
+                return (pAinA && aS > bS) || (!pAinA && bS > aS);
+              });
+              const recentA = last3.filter(Boolean).length;
+              if (wA === wB) verdict = "⚖️ Rivalité parfaitement équilibrée";
+              else if (wA > wB && recentA >= 2) verdict = `🔥 ${pName(h2hA).split(" ")[0]} domine la rivalité`;
+              else if (wB > wA && recentA <= 1) verdict = `🔥 ${pName(h2hB).split(" ")[0]} domine la rivalité`;
+              else if (wA > wB) verdict = `📈 ${pName(h2hB).split(" ")[0]} renverse la tendance`;
+              else verdict = `📈 ${pName(h2hA).split(" ")[0]} renverse la tendance`;
+            }
+
+            // ── Ensemble ──
+            let togW = 0, togN = 0;
+            if (h2hA && h2hB && h2hA !== h2hB) {
+              sortedAsc.forEach(m => {
+                const bothA = [m.a1, m.a2].includes(h2hA) && [m.a1, m.a2].includes(h2hB);
+                const bothB = [m.b1, m.b2].includes(h2hA) && [m.b1, m.b2].includes(h2hB);
+                if (!bothA && !bothB) return;
+                const aS = m.sets.filter(s => s.a > s.b).length;
+                const bS = m.sets.filter(s => s.b > s.a).length;
+                togN++;
+                if ((bothA && aS > bS) || (bothB && bS > aS)) togW++;
+              });
+            }
+
+            // ── Match référence (plus gros écart de jeux) ──
+            let ref = null;
+            duels.forEach(m => {
+              const real = m.superTieBreak ? m.sets.slice(0, -1) : m.sets;
+              const ga = real.reduce((s, x) => s + x.a, 0);
+              const gb = real.reduce((s, x) => s + x.b, 0);
+              const diff = Math.abs(ga - gb);
+              if (!ref || diff > ref.diff) ref = { m, diff };
+            });
+
+            const last3Squares = duels.slice(-3).map(m => {
+              const aS = m.sets.filter(s => s.a > s.b).length;
+              const bS = m.sets.filter(s => s.b > s.a).length;
+              const pAinA = [m.a1, m.a2].includes(h2hA);
+              return (pAinA && aS > bS) || (!pAinA && bS > aS);
+            });
 
             return (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <h2 style={{ fontFamily: "'Bebas Neue'", fontSize: 20, letterSpacing: 2, color: C.accent }}>FACE À FACE</h2>
 
-                {/* Player selectors */}
+                {/* Sélecteurs */}
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                   <select value={h2hA} onChange={e => setH2hA(e.target.value)} style={{ flex: 1 }}>
                     <option value="">— Joueur A —</option>
@@ -1757,61 +1819,153 @@ export default function PadelTracker() {
                   </select>
                 </div>
 
-                {/* Result */}
-                {h2hA && h2hB && h2hA !== h2hB && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    {total === 0 ? (
-                      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, textAlign: "center", color: C.muted, fontSize: 13 }}>
-                        Ces deux joueurs ne se sont pas encore affrontés.
+                {(!h2hA || !h2hB) && (
+                  <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, textAlign: "center", color: C.muted, fontSize: 13 }}>
+                    Sélectionne deux joueurs pour voir leur rivalité.
+                  </div>
+                )}
+
+                {h2hA && h2hB && h2hA !== h2hB && sA && sB && (
+                  <>
+                    {/* ── Affiche du duel ── */}
+                    <div style={{ background: `linear-gradient(160deg, ${C.accent}0C, ${C.card})`, border: `1px solid ${C.border}`, borderRadius: 12, padding: "18px 14px", textAlign: "center" }}>
+                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontFamily: "'Bebas Neue'", fontSize: 20, letterSpacing: 1.5, lineHeight: 1.1 }}>{pName(h2hA).toUpperCase()}</div>
+                          <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 15, color: C.accent, marginTop: 4 }}>{sA.elo} <span style={{ fontSize: 9, color: C.muted }}>ELO</span></div>
+                        </div>
+                        <div style={{ fontFamily: "'Bebas Neue'", fontSize: 15, letterSpacing: 3, color: C.muted, paddingTop: 4 }}>VS</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontFamily: "'Bebas Neue'", fontSize: 20, letterSpacing: 1.5, lineHeight: 1.1 }}>{pName(h2hB).toUpperCase()}</div>
+                          <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 15, color: C.accent, marginTop: 4 }}>{sB.elo} <span style={{ fontSize: 9, color: C.muted }}>ELO</span></div>
+                        </div>
                       </div>
-                    ) : (
-                      <>
-                        {/* Score global */}
-                        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16 }}>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                            <div style={{ textAlign: "center", flex: 1 }}>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: wA >= wB ? C.green : C.text, marginBottom: 4 }}>{pName(h2hA)}</div>
-                              <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 48, lineHeight: 1, color: wA >= wB ? C.green : C.text }}>{wA}</div>
-                            </div>
-                            <div style={{ textAlign: "center", padding: "0 12px" }}>
-                              <div style={{ fontFamily: "'Bebas Neue'", fontSize: 14, letterSpacing: 3, color: C.muted }}>{total} MATCH{total > 1 ? "S" : ""}</div>
-                            </div>
-                            <div style={{ textAlign: "center", flex: 1 }}>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: wB > wA ? C.green : C.text, marginBottom: 4 }}>{pName(h2hB)}</div>
-                              <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 48, lineHeight: 1, color: wB > wA ? C.green : C.text }}>{wB}</div>
-                            </div>
+
+                      {total > 0 ? (
+                        <>
+                          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 14, marginTop: 14 }}>
+                            <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 48, lineHeight: 1, color: wA >= wB ? C.green : C.text }}>{wA}</span>
+                            <span style={{ fontSize: 11, color: C.muted, letterSpacing: 2 }}>{total} DUEL{total > 1 ? "S" : ""}</span>
+                            <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 48, lineHeight: 1, color: wB > wA ? C.green : C.text }}>{wB}</span>
                           </div>
-                          {/* Progress bar */}
-                          <div style={{ height: 6, background: C.red + "88", borderRadius: 3, overflow: "hidden" }}>
+                          <div style={{ height: 6, background: C.red + "66", borderRadius: 3, overflow: "hidden", marginTop: 8 }}>
                             <div style={{ height: "100%", width: (wA / total * 100) + "%", background: C.green, borderRadius: 3 }} />
                           </div>
-                          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 11, color: C.muted }}>
-                            <span>{Math.round(wA / total * 100)}%</span>
-                            <span>{Math.round(wB / total * 100)}%</span>
+                          {verdict && <div style={{ marginTop: 12, fontSize: 12, fontWeight: 700, color: C.accent }}>{verdict}</div>}
+                        </>
+                      ) : (
+                        <div style={{ marginTop: 14, fontSize: 12, color: C.muted }}>Jamais affrontés — le premier duel reste à écrire.</div>
+                      )}
+                    </div>
+
+                    {/* ── Indice Folelli ── */}
+                    {indice !== null && (
+                      <div style={{ background: C.card, border: `1px solid ${C.accent}33`, borderRadius: 10, padding: 12 }}>
+                        <div style={{ fontSize: 10, color: C.accent, fontWeight: 700, letterSpacing: 1.5, marginBottom: 8 }}>⚡ INDICE FOLELLI — PROCHAIN DUEL</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, width: 44 }}>{indice}%</span>
+                          <div style={{ flex: 1, height: 8, borderRadius: 4, overflow: "hidden", display: "flex" }}>
+                            <div style={{ width: indice + "%", background: indice >= 50 ? C.green : C.textSub }} />
+                            <div style={{ width: (100 - indice) + "%", background: indice < 50 ? C.green : C.textSub, opacity: 0.6 }} />
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, width: 44, textAlign: "right" }}>{100 - indice}%</span>
+                        </div>
+                        <div style={{ fontSize: 10, color: C.muted, marginTop: 6, textAlign: "center" }}>
+                          {indice === 50 ? "Impossible de les départager" : `${pName(indice > 50 ? h2hA : h2hB).split(" ")[0]} favori`} · calcul : ELO + duels + jeux + forme{total === 0 ? " (jamais affrontés : ELO + forme uniquement)" : ""}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Stats de la rivalité ── */}
+                    {total > 0 && (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, textAlign: "center" }}>
+                          <div style={{ fontSize: 9, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>🎾 JEUX DANS LES DUELS</div>
+                          <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>
+                            <span style={{ color: gA >= gB ? C.green : C.text }}>{gA}</span>
+                            <span style={{ color: C.muted }}> — </span>
+                            <span style={{ color: gB > gA ? C.green : C.text }}>{gB}</span>
+                          </div>
+                          <div style={{ fontSize: 9, color: C.muted, marginTop: 2 }}>
+                            {gA === gB ? "Égalité parfaite" : `${pName(gA > gB ? h2hA : h2hB).split(" ")[0]} domine les échanges`}
                           </div>
                         </div>
+                        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, textAlign: "center" }}>
+                          <div style={{ fontSize: 9, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>📈 DYNAMIQUE</div>
+                          <div style={{ display: "flex", justifyContent: "center", gap: 5, marginTop: 7 }}>
+                            {last3Squares.map((won, i) => (
+                              <span key={i} style={{
+                                width: 24, height: 24, borderRadius: 6, fontSize: 10, fontWeight: 700,
+                                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                background: (won ? C.green : C.red) + "22",
+                                border: `1.5px solid ${won ? C.green : C.red}`,
+                                color: won ? C.green : C.red,
+                              }}>{pName(won ? h2hA : h2hB).charAt(0).toUpperCase()}</span>
+                            ))}
+                          </div>
+                          <div style={{ fontSize: 9, color: C.muted, marginTop: 6 }}>
+                            {last3Squares.length > 0 && (last3Squares[last3Squares.length - 1]
+                              ? `${pName(h2hA).split(" ")[0]} a pris le dernier duel`
+                              : `${pName(h2hB).split(" ")[0]} a pris le dernier duel`)}
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
-                        {/* Match history */}
+                    {/* ── Ensemble ── */}
+                    {togN > 0 && (
+                      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, display: "flex", alignItems: "center", gap: 12 }}>
+                        <span style={{ fontSize: 22 }}>🤝</span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>ET EN ÉQUIPE ENSEMBLE ?</div>
+                          <div style={{ fontSize: 12, fontWeight: 600, marginTop: 2 }}>
+                            {togN} match{togN > 1 ? "s" : ""} côte à côte · <span style={{ color: togW > togN - togW ? C.green : togW < togN - togW ? C.red : C.accent, fontWeight: 700 }}>{togW}V-{togN - togW}D</span>
+                          </div>
+                          <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
+                            {togW > togN - togW ? "Redoutables quand ils s'allient 🔗" : togW < togN - togW ? "Meilleurs ennemis que partenaires 😄" : "Aussi imprévisibles ensemble que face à face"}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Match référence ── */}
+                    {ref && total > 1 && (() => {
+                      const m = ref.m;
+                      const aS = m.sets.filter(s => s.a > s.b).length;
+                      const bS = m.sets.filter(s => s.b > s.a).length;
+                      const aWin = aS > bS;
+                      const winners = aWin ? [m.a1, m.a2] : [m.b1, m.b2];
+                      const losers = aWin ? [m.b1, m.b2] : [m.a1, m.a2];
+                      const setsTxt = m.sets.map(s => aWin ? `${s.a}-${s.b}` : `${s.b}-${s.a}`).join(" · ");
+                      const dateStr = new Date(m.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+                      return (
+                        <div style={{ background: `linear-gradient(135deg, ${C.accent}0A, ${C.card})`, border: `1px solid ${C.accent}33`, borderRadius: 10, padding: 12 }}>
+                          <div style={{ fontSize: 10, color: C.accent, fontWeight: 700, letterSpacing: 1.5, marginBottom: 6 }}>💥 LE MATCH RÉFÉRENCE</div>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600 }}>{pName(winners[0]).split(" ")[0]}/{pName(winners[1]).split(" ")[0]} battent {pName(losers[0]).split(" ")[0]}/{pName(losers[1]).split(" ")[0]}</div>
+                              <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{dateStr} · le plus gros écart de la rivalité (+{ref.diff} jeux)</div>
+                            </div>
+                            <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 16, color: C.green, flexShrink: 0 }}>{setsTxt}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* ── Historique des confrontations ── */}
+                    {total > 0 && (
+                      <>
                         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.muted }}>HISTORIQUE DES CONFRONTATIONS</div>
-                        {h2hMatches.map(m => {
+                        {[...duels].reverse().map(m => {
                           const aSets = m.sets.filter(s => s.a > s.b).length;
                           const bSets = m.sets.filter(s => s.b > s.a).length;
                           const aWin = aSets > bSets;
                           const pAinA = [m.a1, m.a2].includes(h2hA);
                           const pAwin = (pAinA && aWin) || (!pAinA && !aWin);
                           const dateStr = new Date(m.date).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
-
-                          // Figure out partners
-                          const pApartner = pAinA
-                            ? [m.a1, m.a2].find(x => x !== h2hA)
-                            : [m.b1, m.b2].find(x => x !== h2hA);
-                          const pBpartner = pAinA
-                            ? [m.b1, m.b2].find(x => x !== h2hB)
-                            : [m.a1, m.a2].find(x => x !== h2hB);
-
-                          // Reorder sets so pA is always left
+                          const pApartner = pAinA ? [m.a1, m.a2].find(x => x !== h2hA) : [m.b1, m.b2].find(x => x !== h2hA);
+                          const pBpartner = pAinA ? [m.b1, m.b2].find(x => x !== h2hB) : [m.a1, m.a2].find(x => x !== h2hB);
                           const displaySets = m.sets.map(s => pAinA ? s : { a: s.b, b: s.a });
-
                           return (
                             <div key={m.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12 }}>
                               <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>{dateStr}{m.superTieBreak ? " · STB" : ""}</div>
@@ -1844,13 +1998,7 @@ export default function PadelTracker() {
                         })}
                       </>
                     )}
-                  </div>
-                )}
-
-                {(!h2hA || !h2hB) && (
-                  <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, textAlign: "center", color: C.muted, fontSize: 13 }}>
-                    Sélectionne deux joueurs pour voir leurs confrontations.
-                  </div>
+                  </>
                 )}
               </div>
             );
@@ -2018,9 +2166,9 @@ export default function PadelTracker() {
             const RecordModal = ({ record, onClose }) => {
               if (!record) return null;
               return (
-                <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 200, display: "flex", alignItems: "flex-end" }}
+                <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "14px 10px calc(100px + env(safe-area-inset-bottom))" }}
                   onClick={onClose}>
-                  <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: "16px 16px 0 0", padding: 20, maxHeight: "75vh", overflowY: "auto" }}
+                  <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, maxHeight: "calc(100dvh - 150px)", overflowY: "auto" }}
                     onClick={e => e.stopPropagation()}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -2100,9 +2248,9 @@ export default function PadelTracker() {
             const RecordModal = ({ record, onClose }) => {
               if (!record) return null;
               return (
-                <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 200, display: "flex", alignItems: "flex-end" }}
+                <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "14px 10px calc(100px + env(safe-area-inset-bottom))" }}
                   onClick={onClose}>
-                  <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: "16px 16px 0 0", padding: 20, maxHeight: "75vh", overflowY: "auto" }}
+                  <div className="slide-up" style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, maxHeight: "calc(100dvh - 150px)", overflowY: "auto" }}
                     onClick={e => e.stopPropagation()}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -2653,6 +2801,70 @@ export default function PadelTracker() {
 
         </div>
       </div>
+
+      {/* ── Barre d'onglets en bas ── */}
+      <div style={{
+        position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 90,
+        background: C.surface, borderTop: `1px solid ${C.border}`,
+        display: "flex", padding: "6px 4px calc(8px + env(safe-area-inset-bottom))",
+        maxWidth: 640, margin: "0 auto",
+      }}>
+        {mainTabs.map(t => (
+          <button key={t.id} onClick={() => { setTab(t.id); setMoreOpen(false); }} style={{
+            flex: 1, background: "transparent", display: "flex", flexDirection: "column",
+            alignItems: "center", gap: 3, padding: "4px 0",
+            color: tab === t.id ? C.accent : C.muted,
+          }}>
+            <span style={{
+              fontSize: 19,
+              filter: tab === t.id ? "none" : "grayscale(60%) opacity(.75)",
+              transform: tab === t.id ? "scale(1.15)" : "none",
+              transition: "transform .15s",
+            }}>{t.icon}</span>
+            <span style={{ fontSize: 9, fontWeight: 700 }}>{t.label}</span>
+            <span style={{ width: 4, height: 4, borderRadius: "50%", background: tab === t.id ? C.accent : "transparent" }} />
+          </button>
+        ))}
+        <button onClick={() => setMoreOpen(v => !v)} style={{
+          flex: 1, background: "transparent", display: "flex", flexDirection: "column",
+          alignItems: "center", gap: 3, padding: "4px 0",
+          color: isMoreTab || moreOpen ? C.accent : C.muted,
+        }}>
+          <span style={{ fontSize: 19, transform: isMoreTab || moreOpen ? "scale(1.15)" : "none", transition: "transform .15s" }}>
+            {isMoreTab ? moreTabs.find(t => t.id === tab)?.icon : "⊞"}
+          </span>
+          <span style={{ fontSize: 9, fontWeight: 700 }}>Plus</span>
+          <span style={{ width: 4, height: 4, borderRadius: "50%", background: isMoreTab || moreOpen ? C.accent : "transparent" }} />
+        </button>
+      </div>
+
+      {/* ── Menu "Plus" ── */}
+      {moreOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 95 }} onClick={() => setMoreOpen(false)}>
+          <div className="sheet-up" style={{
+            position: "absolute", bottom: 0, left: 0, right: 0,
+            maxWidth: 640, margin: "0 auto",
+            background: C.card, border: `1px solid ${C.border}`, borderRadius: "16px 16px 0 0",
+            padding: "16px 16px calc(90px + env(safe-area-inset-bottom))",
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, letterSpacing: 2, marginBottom: 12 }}>PLUS D'ONGLETS</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {moreTabs.map(t => (
+                <button key={t.id} onClick={() => { setTab(t.id); setMoreOpen(false); }} className="tile-press" style={{
+                  background: tab === t.id ? C.accent + "18" : C.surface,
+                  border: `1px solid ${tab === t.id ? C.accent : C.border}`,
+                  borderRadius: 10, padding: "14px 10px",
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                  color: tab === t.id ? C.accent : C.text,
+                }}>
+                  <span style={{ fontSize: 24 }}>{t.icon}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>{t.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Player modal */}
       <PlayerModal player={selectedPlayer} qualifiedOnly={showOnlyQualified} calCount={eloStats.calCount || 0}
