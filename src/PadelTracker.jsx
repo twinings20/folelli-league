@@ -319,7 +319,8 @@ function computeElo(players, matches) {
   const qualifiedStats = stats.filter(p => p.played >= MIN_MATCHES);
   qualifiedStats.forEach((p, i) => { p.currentRankQ = i + 1; });
 
-  // Difficulté du calendrier : ELO moyen des adversaires (au moment du match)
+  // Difficulté du calendrier : formule hybride = moyenne entre l'ELO de l'adversaire
+  // au moment du match et son ELO actuel (corrige les débutants sous-cotés à 1000)
   stats.forEach(p => {
     let totalOpp = 0, count = 0;
     sorted.forEach((m, idx) => {
@@ -327,7 +328,11 @@ function computeElo(players, matches) {
       const inB = [m.b1, m.b2].includes(p.id);
       if (!inA && !inB) return;
       const pre = idx > 0 ? ratingSnapshots[idx - 1] : null;
-      const g = id => pre ? (pre[id] ?? ELO_START) : ELO_START;
+      const g = id => {
+        const atMatch = pre ? (pre[id] ?? ELO_START) : ELO_START;
+        const current = ratings[id] ?? ELO_START;
+        return (atMatch + current) / 2;
+      };
       const opps = inA ? [m.b1, m.b2] : [m.a1, m.a2];
       totalOpp += (g(opps[0]) + g(opps[1])) / 2;
       count++;
@@ -1930,21 +1935,11 @@ export default function PadelTracker() {
             const rBestPct = [...qualified3].sort((a,b) => gamePct(b) - gamePct(a));
             const rWorstPct = [...qualified3].sort((a,b) => gamePct(a) - gamePct(b));
 
-            // Calendrier le plus dur : ELO moyen des adversaires au moment de chaque match
-            const oppEloStats = qualified3.map(p => {
-              let totalOppElo = 0, count = 0;
-              sorted.forEach((m, idx) => {
-                const inA = [m.a1, m.a2].includes(p.id);
-                const inB = [m.b1, m.b2].includes(p.id);
-                if (!inA && !inB) return;
-                const pre = idx > 0 ? snapshots[idx - 1] : null;
-                const g = id => pre ? (pre[id] ?? ELO_START) : ELO_START;
-                const opps = inA ? [m.b1, m.b2] : [m.a1, m.a2];
-                totalOppElo += (g(opps[0]) + g(opps[1])) / 2;
-                count++;
-              });
-              return { name: p.name, avgOppElo: count > 0 ? Math.round(totalOppElo / count) : ELO_START, count };
-            }).sort((a, b) => b.avgOppElo - a.avgOppElo);
+            // Calendrier le plus dur : formule hybride (déjà calculée dans eloStats)
+            const oppEloStats = qualified3
+              .filter(p => p.avgOppElo !== null && p.avgOppElo !== undefined)
+              .map(p => ({ name: p.name, avgOppElo: p.avgOppElo, count: p.played }))
+              .sort((a, b) => b.avgOppElo - a.avgOppElo);
 
             // Tueur de géants : win rate contre les joueurs actuellement top 3 (qualifiés)
             const top3Ids = eloStats.filter(p => p.played >= MIN_MATCHES).slice(0, 3).map(p => p.id);
