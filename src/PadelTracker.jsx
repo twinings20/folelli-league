@@ -149,7 +149,13 @@ function computePartnerRival(pid, sorted, players) {
   const rival = Object.entries(rivalStats)
     .sort(([, a], [, b]) => b.total - a.total)[0];
 
+  const topPartners = Object.entries(partnerStats)
+    .sort(([, a], [, b]) => b.total - a.total || b.w - a.w)
+    .slice(0, 3)
+    .map(([id, s]) => ({ name: pName(id), w: s.w, total: s.total, wr: s.total > 0 ? Math.round(s.w / s.total * 100) : 0 }));
+
   return {
+    topPartners,
     bestPartner: bestPartner ? { name: pName(bestPartner[0]), w: bestPartner[1].w, total: bestPartner[1].total } : null,
     beteNoire: beteNoire ? { name: pName(beteNoire[0]), w: beteNoire[1].w, total: beteNoire[1].total } : null,
     victime: victime ? { name: pName(victime[0]), w: victime[1].w, total: victime[1].total } : null,
@@ -226,7 +232,7 @@ function computeElo(players, matches) {
     const hist = history[p.id] || [];
     const lastDelta = hist.length > 1 ? hist[hist.length - 1].delta : null;
     const { streak, streakType } = computeStreak(p.id, sorted);
-    const { bestPartner, beteNoire, victime, rival } = computePartnerRival(p.id, sorted, players);
+    const { bestPartner, beteNoire, victime, rival, topPartners } = computePartnerRival(p.id, sorted, players);
     // Évolution du classement sur les 5 derniers matchs du joueur
     const playerMatchIndexes = [];
     sorted.forEach((m, idx) => {
@@ -249,6 +255,35 @@ function computeElo(players, matches) {
       const pos = ranked.findIndex(r => r.id === p.id);
       return pos >= 0 ? pos + 1 : null;
     }).filter(r => r !== null);
+
+    // Points de la courbe interactive : rang + détail du match (5 derniers)
+    const last5Idx = playerMatchIndexes.slice(-5);
+    const curvePoints = last5Idx.map((idx, k) => {
+      const m = sorted[idx];
+      const aS = m.sets.filter(s => s.a > s.b).length;
+      const bS = m.sets.filter(s => s.b > s.a).length;
+      const inA = [m.a1, m.a2].includes(p.id);
+      const won = (inA && aS > bS) || (!inA && bS > aS);
+      const partnerId = inA ? (m.a1 === p.id ? m.a2 : m.a1) : (m.b1 === p.id ? m.b2 : m.b1);
+      const opps = inA ? [m.b1, m.b2] : [m.a1, m.a2];
+      const pn = id => players.find(pl => pl.id === id)?.name || "?";
+      const setsTxt = m.sets.map(s => inA ? `${s.a}-${s.b}` : `${s.b}-${s.a}`).join(" · ");
+      const d = new Date(m.date);
+      const dateShort = `${d.getDate()}/${d.getMonth() + 1}`;
+      const dateLong = d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+      const histEntry = (history[p.id] || []).find(h => h.matchId === m.id);
+      const delta = histEntry ? histEntry.delta : 0;
+      // Rang (tous joueurs) après ce match
+      const snap = ratingSnapshots[idx];
+      const rankedAll = players.map(pl => ({ id: pl.id, elo: snap ? (snap[pl.id] ?? ELO_START) : ELO_START })).sort((a, b) => b.elo - a.elo);
+      const rank = rankedAll.findIndex(r => r.id === p.id) + 1;
+      // Rang qualifiés après ce match
+      const rankedQ = players.filter(pl => qualifiedIds.includes(pl.id))
+        .map(pl => ({ id: pl.id, elo: snap ? (snap[pl.id] ?? ELO_START) : ELO_START })).sort((a, b) => b.elo - a.elo);
+      const posQ = rankedQ.findIndex(r => r.id === p.id);
+      const rankQ = posQ >= 0 ? posQ + 1 : null;
+      return { rank, rankQ, dateShort, dateLong, won, partner: pn(partnerId), opp1: pn(opps[0]), opp2: pn(opps[1]), setsTxt, delta };
+    });
 
     // 5 derniers matchs (enrichis)
     const pNameL = id => players.find(pl => pl.id === id)?.name || "?";
@@ -276,13 +311,32 @@ function computeElo(players, matches) {
       if (formats[fmt]) { if (won) formats[fmt].w++; else formats[fmt].l++; }
     });
 
-    return { id: p.id, name: p.name, elo, played: played[p.id] || 0, wins, losses, lastDelta, history: hist, streak, streakType, bestPartner, beteNoire, victime, rival, gamesW, gamesL, last5, formats, rankHistory, rankHistoryQ };
+    return { id: p.id, name: p.name, elo, played: played[p.id] || 0, wins, losses, lastDelta, history: hist, streak, streakType, bestPartner, beteNoire, victime, rival, topPartners, gamesW, gamesL, last5, formats, rankHistory, rankHistoryQ, curvePoints };
   });
 
   stats.sort((a, b) => b.elo - a.elo || b.wins - a.wins);
   stats.forEach((p, i) => { p.currentRank = i + 1; });
   const qualifiedStats = stats.filter(p => p.played >= MIN_MATCHES);
   qualifiedStats.forEach((p, i) => { p.currentRankQ = i + 1; });
+
+  // Difficulté du calendrier : ELO moyen des adversaires (au moment du match)
+  stats.forEach(p => {
+    let totalOpp = 0, count = 0;
+    sorted.forEach((m, idx) => {
+      const inA = [m.a1, m.a2].includes(p.id);
+      const inB = [m.b1, m.b2].includes(p.id);
+      if (!inA && !inB) return;
+      const pre = idx > 0 ? ratingSnapshots[idx - 1] : null;
+      const g = id => pre ? (pre[id] ?? ELO_START) : ELO_START;
+      const opps = inA ? [m.b1, m.b2] : [m.a1, m.a2];
+      totalOpp += (g(opps[0]) + g(opps[1])) / 2;
+      count++;
+    });
+    p.avgOppElo = count > 0 ? Math.round(totalOpp / count) : null;
+  });
+  const calSorted = qualifiedStats.filter(p => p.avgOppElo !== null).slice().sort((a, b) => b.avgOppElo - a.avgOppElo);
+  calSorted.forEach((p, i) => { p.calRank = i + 1; });
+  stats.calCount = calSorted.length;
 
   // Compute rank movement vs previous match
   // Re-run ELO without the last match to get previous ranks
@@ -579,12 +633,25 @@ function SetScore({ sets }) {
 }
 
 // ─── Player detail modal ──────────────────────────────────────────────────────
-function PlayerModal({ player, qualifiedOnly, monthTitles, onClose }) {
+function PlayerModal({ player, qualifiedOnly, monthTitles, calCount, onClose }) {
+  const [selPoint, setSelPoint] = useState(null);
+  useEffect(() => { setSelPoint(null); }, [player]);
   if (!player) return null;
   const winRate = player.played > 0 ? Math.round((player.wins / player.played) * 100) : 0;
   const gamePct = (player.gamesW + player.gamesL) > 0 ? Math.round(player.gamesW / (player.gamesW + player.gamesL) * 100) : null;
   const wrColor = v => v >= 60 ? C.green : v >= 40 ? C.accent : C.red;
   const titles = monthTitles || [];
+  const rankLabel = r => r === 1 ? "1er" : `${r}ème`;
+
+  // ── Courbe interactive : points = 5 derniers matchs + Auj. ──
+  const useQ = qualifiedOnly && player.currentRankQ;
+  const cps = (player.curvePoints || []).filter(cp => !useQ || cp.rankQ !== null);
+  const currentRank = useQ ? player.currentRankQ : player.currentRank;
+  const curveData = [
+    ...cps.map(cp => ({ ...cp, r: useQ ? cp.rankQ : cp.rank, isToday: false })),
+    { r: currentRank, dateShort: "Auj.", isToday: true },
+  ];
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 100, display: "flex", alignItems: "flex-end" }}
       onClick={onClose}>
@@ -629,125 +696,150 @@ function PlayerModal({ player, qualifiedOnly, monthTitles, onClose }) {
           </div>
         )}
 
-        {/* ── Courbe ELO ── */}
-        {player.history.length > 1 && (
-          <div style={{ background: C.surface, borderRadius: 8, padding: 12, marginBottom: 10 }}>
-            <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1, marginBottom: 8, textAlign: "center" }}>ÉVOLUTION ELO</div>
-            <div style={{ display: "flex", justifyContent: "center" }}>
-              <MiniSparklineWide history={player.history} />
-            </div>
-          </div>
-        )}
-
-        {/* ── Courbe classement ── */}
-        {player.rankHistory && player.rankHistory.length > 1 && player.played > 0 && (() => {
-          const baseHist = qualifiedOnly && player.rankHistoryQ && player.rankHistoryQ.length > 0 ? player.rankHistoryQ : player.rankHistory;
-          const baseCurrent = qualifiedOnly && player.currentRankQ ? player.currentRankQ : player.currentRank;
-          const rh = [...baseHist, baseCurrent];
-          const labels = [...baseHist.map((_, i) => `M${i + 1}`), "Auj."];
-          const PAD_X = 20, PAD_Y = 18;
-          const W = 280, H = 90;
-          const maxRank = Math.max(...rh);
-          const minRank = Math.min(...rh);
-          const range = maxRank - minRank;
-          const pts = rh.map((r, i) => {
-            const x = PAD_X + (i / (rh.length - 1)) * (W - 2 * PAD_X);
-            const y = range === 0 ? H / 2 : PAD_Y + ((r - minRank) / range) * (H - 2 * PAD_Y);
-            return { x, y, r };
-          });
-          const polyline = pts.map(p => `${p.x},${p.y}`).join(" ");
-          const improving = rh[rh.length - 1] < rh[0];
-          const flat = rh[rh.length - 1] === rh[0];
-          const color = flat ? C.accent : improving ? C.green : C.red;
+        {/* ── Courbe interactive ── */}
+        {curveData.length > 1 && player.played > 0 && (() => {
+          const rh = curveData.map(p => p.r);
+          const minR = Math.min(...rh), maxR = Math.max(...rh);
+          const rankLevels = [];
+          for (let r = minR; r <= maxR; r++) rankLevels.push(r);
+          const VW = 320, VH = 30 + Math.max(rankLevels.length, 2) * 24;
+          const PAD_L = 30, PAD_R = 16, PAD_T = 14, PAD_B = 20;
+          const yFor = r => PAD_T + ((r - minR) / Math.max(maxR - minR, 1)) * (VH - PAD_T - PAD_B);
+          const xFor = i => PAD_L + (i / (curveData.length - 1)) * (VW - PAD_L - PAD_R);
+          const pts = curveData.map((p, i) => ({ ...p, x: xFor(i), y: maxR === minR ? VH / 2 : yFor(p.r) }));
+          const line = pts.map(p => `${p.x},${p.y}`).join(" ");
+          const selected = selPoint !== null && pts[selPoint] ? pts[selPoint] : null;
           return (
-            <div style={{ background: C.surface, borderRadius: 8, padding: 12, marginBottom: 14 }}>
-              <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1, marginBottom: 8, textAlign: "center" }}>
-                PLACE AU CLASSEMENT{qualifiedOnly ? " (QUALIFIÉS)" : ""}
+            <div style={{ background: C.surface, borderRadius: 10, padding: 12, marginBottom: 14 }}>
+              <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1.5, marginBottom: 8, textAlign: "center" }}>
+                PLACE AU CLASSEMENT{useQ ? " (QUALIFIÉS)" : ""}
               </div>
-              <div style={{ display: "flex", justifyContent: "center" }}>
-                <svg width={W} height={H}>
-                  <polyline points={polyline} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" opacity="0.5" />
-                  {pts.map((p, i) => {
-                    const isLast = i === pts.length - 1;
-                    const c = isLast ? C.accent : color;
-                    return (
-                      <g key={i}>
-                        <circle cx={p.x} cy={p.y} r="11" fill={C.card} stroke={c} strokeWidth={isLast ? 2.5 : 2} />
-                        <text x={p.x} y={p.y + 4} textAnchor="middle" fontSize="11" fontWeight="700" fill={c}>{p.r}</text>
-                      </g>
-                    );
-                  })}
-                </svg>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", padding: `0 ${PAD_X - 12}px`, marginTop: 2 }}>
-                {pts.map((p, i) => (
-                  <span key={i} style={{ fontSize: 9, color: i === pts.length - 1 ? C.accent : C.muted, fontWeight: i === pts.length - 1 ? 700 : 400, width: 24, textAlign: "center" }}>
-                    {labels[i]}
-                  </span>
+              <svg viewBox={`0 0 ${VW} ${VH}`} style={{ width: "100%", height: "auto", display: "block" }}>
+                {rankLevels.map(r => (
+                  <g key={r}>
+                    <line x1={PAD_L} y1={maxR === minR ? VH / 2 : yFor(r)} x2={VW - PAD_R} y2={maxR === minR ? VH / 2 : yFor(r)}
+                      stroke={C.border} strokeWidth="1" strokeDasharray={r === 1 ? "none" : "3,4"} opacity={r === 1 ? 0.9 : 0.5} />
+                    <text x={PAD_L - 8} y={(maxR === minR ? VH / 2 : yFor(r)) + 3.5} textAnchor="end" fontSize="10" fontWeight="700"
+                      fill={r === 1 ? C.accent : C.muted}>{r}{r === 1 ? "👑" : ""}</text>
+                  </g>
                 ))}
+                <polyline points={line} fill="none" stroke={C.textSub} strokeWidth="2" strokeLinejoin="round" opacity="0.55" />
+                {pts.map((p, i) => {
+                  const isSel = selPoint === i;
+                  const ptColor = p.isToday ? C.accent : p.won ? C.green : C.red;
+                  return (
+                    <g key={i} onClick={() => setSelPoint(selPoint === i ? null : i)} style={{ cursor: "pointer" }}>
+                      <circle cx={p.x} cy={p.y} r="16" fill="transparent" />
+                      {isSel && <circle cx={p.x} cy={p.y} r="10" fill={ptColor + "33"} />}
+                      <circle cx={p.x} cy={p.y} r={p.isToday ? 6.5 : 5.5}
+                        fill={p.isToday ? C.accent : isSel ? ptColor : C.card}
+                        stroke={ptColor} strokeWidth="2.5" />
+                    </g>
+                  );
+                })}
+                {pts.map((p, i) => (
+                  <text key={i} x={p.x} y={VH - 4} textAnchor="middle" fontSize="9"
+                    fontWeight={p.isToday || selPoint === i ? "700" : "400"}
+                    fill={p.isToday ? C.accent : selPoint === i ? C.text : C.muted}>{p.dateShort}</text>
+                ))}
+              </svg>
+
+              {selected && !selected.isToday && (
+                <div key={selPoint} style={{
+                  marginTop: 10, background: C.card,
+                  border: `1px solid ${selected.won ? C.green + "44" : C.red + "44"}`,
+                  borderRadius: 8, padding: "10px 12px"
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: C.muted }}>
+                        <span style={{ color: selected.won ? C.green : C.red, fontWeight: 700 }}>{selected.won ? "V" : "D"} avec {selected.partner}</span>
+                        {" · "}{selected.dateLong}
+                      </div>
+                      <div style={{ fontSize: 12, fontWeight: 600, marginTop: 2 }}>vs {selected.opp1} / {selected.opp2}</div>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 10 }}>
+                      <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 15, color: selected.won ? C.green : C.red }}>{selected.setsTxt}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: selected.delta > 0 ? C.green : selected.delta < 0 ? C.red : C.muted }}>
+                        {selected.delta > 0 ? "+" : ""}{selected.delta} ELO
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 10, color: C.muted, marginTop: 6 }}>→ {rankLabel(selected.r)} au classement après ce match</div>
+                </div>
+              )}
+              {selected && selected.isToday && (
+                <div key={selPoint} style={{ marginTop: 10, background: C.card, border: `1px solid ${C.accent}44`, borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
+                  <span style={{ fontSize: 12, color: C.accent, fontWeight: 700 }}>Position actuelle : {rankLabel(selected.r)}{selected.r === 1 ? " 👑" : ""}</span>
+                </div>
+              )}
+
+              <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 10, color: C.green, fontWeight: 600 }}>● Victoire</span>
+                <span style={{ fontSize: 10, color: C.red, fontWeight: 600 }}>● Défaite</span>
+                <span style={{ fontSize: 10, color: C.accent, fontWeight: 600 }}>● Aujourd'hui</span>
+              </div>
+              <div style={{ fontSize: 11, color: C.accent, textAlign: "center", marginTop: 6, fontWeight: 600 }}>
+                👆 Appuie sur un point pour voir le détail du match
               </div>
             </div>
           );
         })()}
 
-        {/* ── 5 derniers matchs ── */}
-        {player.last5 && player.last5.length > 0 && (
+        {/* ── Ses partenaires (top 3) ── */}
+        {player.topPartners && player.topPartners.length > 0 && (
           <>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.muted, marginBottom: 8 }}>DERNIERS MATCHS</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
-              {player.last5.map((m, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, border: `1px solid ${m.won ? C.green + "33" : C.red + "33"}`, borderRadius: 8, padding: "8px 12px" }}>
-                  <span style={{
-                    width: 22, height: 22, borderRadius: 6, flexShrink: 0,
-                    background: (m.won ? C.green : C.red) + "22", color: m.won ? C.green : C.red,
-                    fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center"
-                  }}>{m.won ? "V" : "D"}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, color: C.muted }}>avec <span style={{ color: C.textSub, fontWeight: 600 }}>{m.partner}</span></div>
-                    <div style={{ fontSize: 11.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>vs {m.opp1} / {m.opp2}</div>
-                  </div>
-                  <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 13, color: m.won ? C.green : C.red }}>{m.setsTxt}</div>
-                    <div style={{ fontSize: 9, color: C.muted }}>{m.dateTxt}</div>
-                  </div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.muted, marginBottom: 8 }}>🤝 SES PARTENAIRES</div>
+            <div style={{ background: C.surface, borderRadius: 10, padding: "6px 12px", marginBottom: 14 }}>
+              {player.topPartners.map((p, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: i < player.topPartners.length - 1 ? `1px solid ${C.border}55` : "none" }}>
+                  <span style={{ fontSize: 11, color: C.muted, fontWeight: 700, width: 14 }}>{i + 1}.</span>
+                  <span style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>{p.name}</span>
+                  <span style={{ fontSize: 11, color: C.muted }}>{p.total} match{p.total > 1 ? "s" : ""}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: wrColor(p.wr), width: 38, textAlign: "right" }}>{p.wr}%</span>
                 </div>
               ))}
             </div>
           </>
         )}
 
-        {/* ── Relations ── */}
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.muted, marginBottom: 8 }}>RELATIONS</div>
+        {/* ── Relations & calendrier ── */}
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.muted, marginBottom: 8 }}>RELATIONS & CALENDRIER</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
-          {player.bestPartner && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, borderRadius: 8, padding: "8px 12px" }}>
-              <span style={{ fontSize: 16 }}>🤝</span>
-              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 96, flexShrink: 0 }}>PARTENAIRE FAVORI</span>
-              <span style={{ fontSize: 11.5, fontWeight: 600, color: C.green }}>{player.bestPartner.name} ({player.bestPartner.total} matchs ensemble)</span>
-            </div>
-          )}
           {player.rival && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, borderRadius: 8, padding: "8px 12px" }}>
               <span style={{ fontSize: 16 }}>⚔️</span>
-              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 96, flexShrink: 0 }}>RIVAL</span>
-              <span style={{ fontSize: 11.5, fontWeight: 600, color: C.accent }}>{player.rival.name} ({player.rival.total} confrontations · {player.rival.w}V-{player.rival.total - player.rival.w}D)</span>
+              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 88, flexShrink: 0 }}>RIVAL</span>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: C.accent }}>{player.rival.name} ({player.rival.total} confrontation{player.rival.total > 1 ? "s" : ""} · {player.rival.w}V-{player.rival.total - player.rival.w}D)</span>
             </div>
           )}
           {player.beteNoire && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, borderRadius: 8, padding: "8px 12px" }}>
               <span style={{ fontSize: 16 }}>💀</span>
-              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 96, flexShrink: 0 }}>BÊTE NOIRE</span>
+              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 88, flexShrink: 0 }}>BÊTE NOIRE</span>
               <span style={{ fontSize: 11.5, fontWeight: 600, color: C.red }}>{player.beteNoire.name} ({player.beteNoire.w}V-{player.beteNoire.total - player.beteNoire.w}D)</span>
             </div>
           )}
           {player.victime && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, borderRadius: 8, padding: "8px 12px" }}>
               <span style={{ fontSize: 16 }}>😏</span>
-              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 96, flexShrink: 0 }}>VICTIME FAVORITE</span>
+              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 88, flexShrink: 0 }}>VICTIME FAVORITE</span>
               <span style={{ fontSize: 11.5, fontWeight: 600, color: C.blue }}>{player.victime.name} ({player.victime.w}V-{player.victime.total - player.victime.w}D)</span>
             </div>
           )}
-          {!player.bestPartner && !player.rival && (
+          {player.avgOppElo !== null && player.avgOppElo !== undefined && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, borderRadius: 8, padding: "8px 12px" }}>
+              <span style={{ fontSize: 16 }}>📅</span>
+              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, width: 88, flexShrink: 0 }}>CALENDRIER</span>
+              <span style={{ fontSize: 11.5, fontWeight: 600 }}>
+                Adversaires : ELO moy. <span style={{ color: C.accent, fontWeight: 700 }}>{player.avgOppElo}</span>
+                {player.calRank && calCount > 1 && (
+                  <span style={{ color: C.muted, fontWeight: 400 }}> · {player.calRank === 1 ? "calendrier le + dur" : `${player.calRank}ème calendrier le + dur`} (sur {calCount})</span>
+                )}
+              </span>
+            </div>
+          )}
+          {!player.rival && (
             <p style={{ fontSize: 12, color: C.muted }}>Pas encore de matchs pour ces stats.</p>
           )}
         </div>
@@ -755,7 +847,6 @@ function PlayerModal({ player, qualifiedOnly, monthTitles, onClose }) {
     </div>
   );
 }
-
 
 function MiniSparklineWide({ history }) {
   if (history.length < 2) return null;
@@ -803,6 +894,8 @@ export default function PadelTracker() {
   const [cloudError, setCloudError] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const [palmaresView, setPalmaresView] = useState("mois");
+  const [showAllMonths, setShowAllMonths] = useState(false);
   const [h2hB, setH2hB] = useState("");
 
   const DEFAULT_DATA = {
@@ -2053,9 +2146,20 @@ export default function PadelTracker() {
             return (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
 
+                {/* ── Sous-menu ── */}
+                <div style={{ display: "flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 4, gap: 4 }}>
+                  {[["mois", "🏆 Joueur du mois"], ["regnes", "👑 Règnes"]].map(([id, label]) => (
+                    <button key={id} onClick={() => setPalmaresView(id)} style={{
+                      flex: 1, padding: "9px 0", borderRadius: 7, fontSize: 12, fontWeight: 700,
+                      background: palmaresView === id ? C.accent : "transparent",
+                      color: palmaresView === id ? "#080E0A" : C.muted,
+                    }}>{label}</button>
+                  ))}
+                </div>
+
+                {palmaresView === "mois" && (<>
                 {/* ═══ JOUEUR DU MOIS ═══ */}
-                <Section title="🏆 JOUEUR DU MOIS" />
-                <div style={{ fontSize: 10, color: C.muted, marginTop: -4 }}>
+                <div style={{ fontSize: 10, color: C.muted }}>
                   Score = ΔELO + 3×victoires + (% jeux − 50)÷2 · min. 2 matchs dans le mois
                 </div>
 
@@ -2095,8 +2199,31 @@ export default function PadelTracker() {
 
                 {pastMonths.length > 0 && (
                   <>
+                    {/* Tableau des titres */}
+                    {(() => {
+                      const counts = {};
+                      pastMonths.forEach(m => {
+                        const wid = monthlyAll[m][0].id;
+                        counts[wid] = (counts[wid] || 0) + 1;
+                      });
+                      const board = Object.entries(counts).sort(([, a], [, b]) => b - a);
+                      if (board.length === 0) return null;
+                      return (
+                        <div style={{ background: `linear-gradient(135deg, ${C.accent}0C, ${C.card})`, border: `1px solid ${C.accent}33`, borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>TABLEAU DES TITRES</span>
+                          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                            {board.map(([id, n], i) => (
+                              <span key={id} style={{ fontSize: 12, fontWeight: 700, color: i === 0 ? C.accent : C.textSub }}>
+                                🏆 {pName(id)} <span style={{ fontFamily: "'Rajdhani', sans-serif" }}>×{n}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: C.muted, marginTop: 4 }}>PALMARÈS</div>
-                    {pastMonths.map(month => {
+                    {(showAllMonths ? pastMonths : pastMonths.slice(0, 3)).map(month => {
                       const winner = monthlyAll[month][0];
                       return (
                         <div key={month} className="tile-press"
@@ -2122,9 +2249,22 @@ export default function PadelTracker() {
                         </div>
                       );
                     })}
+                    {pastMonths.length > 3 && !showAllMonths && (
+                      <button onClick={() => setShowAllMonths(true)} style={{ width: "100%", background: "transparent", border: `1px dashed ${C.border}`, color: C.muted, fontSize: 12, fontWeight: 600, padding: "10px", borderRadius: 8 }}>
+                        Voir tout le palmarès ({pastMonths.length} mois) ▾
+                      </button>
+                    )}
+                    {pastMonths.length > 3 && showAllMonths && (
+                      <button onClick={() => setShowAllMonths(false)} style={{ width: "100%", background: "transparent", border: `1px dashed ${C.border}`, color: C.muted, fontSize: 12, fontWeight: 600, padding: "10px", borderRadius: 8 }}>
+                        Replier ▴
+                      </button>
+                    )}
                     <div style={{ fontSize: 10, color: C.muted, textAlign: "center" }}>Appuie sur un mois pour voir le podium complet</div>
                   </>
                 )}
+                </>)}
+
+                {palmaresView === "regnes" && (<>
 
 
                 {(() => {
@@ -2276,6 +2416,7 @@ export default function PadelTracker() {
                     </>
                   );
                 })()}
+                </>)}
 
                 <RecordModal record={activeRecord} onClose={() => setActiveRecord(null)} />
               </div>
@@ -2519,7 +2660,7 @@ export default function PadelTracker() {
       </div>
 
       {/* Player modal */}
-      <PlayerModal player={selectedPlayer} qualifiedOnly={showOnlyQualified}
+      <PlayerModal player={selectedPlayer} qualifiedOnly={showOnlyQualified} calCount={eloStats.calCount || 0}
         monthTitles={(() => {
           if (!selectedPlayer) return [];
           const monthlyAll = computeMonthly(players, matches);
