@@ -2083,6 +2083,49 @@ export default function PadelTracker() {
             const rBestPct = [...qualified3].sort((a,b) => gamePct(b) - gamePct(a));
             const rWorstPct = [...qualified3].sort((a,b) => gamePct(a) - gamePct(b));
 
+            // ── 6-0 infligés / encaissés + % de sets + régicide ──
+            const bagelsFor = {}, bagelsAgainst = {}, setsWon = {}, setsLost = {};
+            eloStats.forEach(p => { bagelsFor[p.id] = 0; bagelsAgainst[p.id] = 0; setsWon[p.id] = 0; setsLost[p.id] = 0; });
+            sorted.forEach(m => {
+              const realG = m.superTieBreak ? m.sets.slice(0, -1) : m.sets;
+              [[m.a1, "A"], [m.a2, "A"], [m.b1, "B"], [m.b2, "B"]].forEach(([id, team]) => {
+                if (setsWon[id] === undefined) return;
+                m.sets.forEach(s => {
+                  const mine = team === "A" ? s.a : s.b;
+                  const theirs = team === "A" ? s.b : s.a;
+                  if (mine > theirs) setsWon[id]++; else setsLost[id]++;
+                });
+                realG.forEach(s => {
+                  const mine = team === "A" ? s.a : s.b;
+                  const theirs = team === "A" ? s.b : s.a;
+                  if (mine === 6 && theirs === 0) bagelsFor[id]++;
+                  if (theirs === 6 && mine === 0) bagelsAgainst[id]++;
+                });
+              });
+            });
+            const pctSets = id => (setsWon[id] + setsLost[id]) > 0 ? setsWon[id] / (setsWon[id] + setsLost[id]) : 0;
+            const rBagelsFor = eloStats.filter(p => bagelsFor[p.id] > 0).sort((a, b) => bagelsFor[b.id] - bagelsFor[a.id]);
+            const rBagelsAgainst = eloStats.filter(p => bagelsAgainst[p.id] > 0).sort((a, b) => bagelsAgainst[b.id] - bagelsAgainst[a.id]);
+            const rBestSets = [...qualified3].sort((a, b) => pctSets(b.id) - pctSets(a.id));
+            const rWorstSets = [...qualified3].sort((a, b) => pctSets(a.id) - pctSets(b.id));
+
+            // Régicide : victoires contre le n°1 en titre (avant le match)
+            const regicide = {};
+            eloStats.forEach(p => { regicide[p.id] = 0; });
+            sorted.forEach((m, idx) => {
+              if (idx === 0) return;
+              const pre = snapshots[idx - 1];
+              if (!pre) return;
+              const topId = players.map(pl => ({ id: pl.id, elo: pre[pl.id] ?? ELO_START })).sort((a, b) => b.elo - a.elo)[0]?.id;
+              if (!topId) return;
+              const aS = m.sets.filter(s => s.a > s.b).length;
+              const bS = m.sets.filter(s => s.b > s.a).length;
+              const winners = aS > bS ? [m.a1, m.a2] : [m.b1, m.b2];
+              const losers = aS > bS ? [m.b1, m.b2] : [m.a1, m.a2];
+              if (losers.includes(topId)) winners.forEach(w => { if (regicide[w] !== undefined) regicide[w]++; });
+            });
+            const rRegicide = eloStats.filter(p => regicide[p.id] > 0).sort((a, b) => regicide[b.id] - regicide[a.id]);
+
             // Calendrier le plus dur : formule hybride (déjà calculée dans eloStats)
             const oppEloStats = qualified3
               .filter(p => p.avgOppElo !== null && p.avgOppElo !== undefined)
@@ -2143,6 +2186,16 @@ export default function PadelTracker() {
                 detail: <Top3 valueColor={C.green} entries={rStreakW.map(s => ({ label: s.name, value: `${s.maxW} victoires` }))} /> },
               rStreakL[0] && rStreakL[0].maxL >= 2 && { icon: "❄️", title: "Série de défaites", holder: rStreakL[0].name, value: `${rStreakL[0].maxL}`, color: C.red,
                 detail: <Top3 valueColor={C.red} entries={rStreakL.map(s => ({ label: s.name, value: `${s.maxL} défaites` }))} /> },
+              rBestSets[0] && { icon: "🎯", title: "Meilleur % de sets", holder: rBestSets[0].name, value: `${Math.round(pctSets(rBestSets[0].id) * 100)}%`, color: C.green,
+                detail: <Top3 valueColor={C.green} entries={rBestSets.map(p => ({ label: `${p.name} (${setsWon[p.id]}S/${setsLost[p.id]}P)`, value: `${Math.round(pctSets(p.id) * 100)}%` }))} /> },
+              rWorstSets[0] && { icon: "📉", title: "Pire % de sets", holder: rWorstSets[0].name, value: `${Math.round(pctSets(rWorstSets[0].id) * 100)}%`, color: C.red,
+                detail: <Top3 valueColor={C.red} entries={rWorstSets.map(p => ({ label: `${p.name} (${setsWon[p.id]}S/${setsLost[p.id]}P)`, value: `${Math.round(pctSets(p.id) * 100)}%` }))} /> },
+              rBagelsFor[0] && { icon: "🥯", title: "Roi du 6-0", holder: rBagelsFor[0].name, value: `${bagelsFor[rBagelsFor[0].id]}`, color: C.green,
+                detail: <Top3 valueColor={C.green} entries={rBagelsFor.map(p => ({ label: p.name, value: `${bagelsFor[p.id]} set${bagelsFor[p.id] > 1 ? "s" : ""} blanc${bagelsFor[p.id] > 1 ? "s" : ""}` }))} /> },
+              rBagelsAgainst[0] && { icon: "😵", title: "Encaisseur de 6-0", holder: rBagelsAgainst[0].name, value: `${bagelsAgainst[rBagelsAgainst[0].id]}`, color: C.red,
+                detail: <Top3 valueColor={C.red} entries={rBagelsAgainst.map(p => ({ label: p.name, value: `${bagelsAgainst[p.id]} set${bagelsAgainst[p.id] > 1 ? "s" : ""} blanc${bagelsAgainst[p.id] > 1 ? "s" : ""}` }))} /> },
+              rRegicide[0] && { icon: "🗡️", title: "Régicide", holder: rRegicide[0].name, value: `${regicide[rRegicide[0].id]}`, color: C.blue,
+                detail: <Top3 valueColor={C.blue} entries={rRegicide.map(p => ({ label: `${p.name} — victoires vs le n°1 en titre`, value: `${regicide[p.id]}` }))} /> },
             ].filter(Boolean);
 
             // Trophy tile
