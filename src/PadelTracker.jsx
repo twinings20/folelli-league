@@ -31,7 +31,7 @@ const css = `
   .tile-press { transition: transform .12s ease; }
   .tile-press:active { transform: scale(.96); }
   @keyframes fadeTab { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-  .fade-tab { animation: fadeTab .25s ease both; }
+  .fade-tab { animation: fadeTab .25s ease; }
 `;
 
 const uid = () => Math.random().toString(36).slice(2, 8);
