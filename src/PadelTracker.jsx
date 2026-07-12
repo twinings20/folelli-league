@@ -402,6 +402,39 @@ function computeElo(players, matches) {
 
 // ─── Joueur du mois ───────────────────────────────────────────────────────────
 // Score = ΔELO du mois + 3×victoires + (% jeux gagnés − 50)/2 · min 2 matchs
+// Agrège les scores mensuels en trimestres et années
+// Trimestres calendaires : T1 janv-mars, T2 avr-juin, T3 juil-sept, T4 oct-déc
+function computePeriods(players, matches) {
+  const monthly = computeMonthly(players, matches); // { "YYYY-MM": [ {id, score, dElo, wins, played, pct}, ... ] }
+  const pName = id => players.find(p => p.id === id)?.name || "?";
+
+  const quarterOf = m => Math.floor((parseInt(m.split("-")[1]) - 1) / 3) + 1;
+
+  const aggregate = keyFn => {
+    const buckets = {}; // periodKey -> playerId -> cumulScore
+    Object.entries(monthly).forEach(([month, rows]) => {
+      const key = keyFn(month);
+      if (!buckets[key]) buckets[key] = {};
+      rows.forEach(r => {
+        buckets[key][r.id] = (buckets[key][r.id] || 0) + r.score;
+      });
+    });
+    const result = {};
+    Object.entries(buckets).forEach(([key, byPlayer]) => {
+      const rows = Object.entries(byPlayer)
+        .map(([id, score]) => ({ id, score: Math.round(score * 10) / 10 }))
+        .sort((a, b) => b.score - a.score);
+      if (rows.length > 0) result[key] = rows;
+    });
+    return result;
+  };
+
+  const quarters = aggregate(m => `${m.split("-")[0]}-T${quarterOf(m)}`);
+  const years = aggregate(m => m.split("-")[0]);
+
+  return { monthly, quarters, years, pName };
+}
+
 function computeMonthly(players, matches) {
   const sorted = [...matches].map((m, i) => ({ ...m, _idx: i })).sort((a, b) => new Date(a.date) - new Date(b.date) || a._idx - b._idx);
   const ratings = {};
@@ -694,11 +727,11 @@ function PlayerModal({ player, qualifiedOnly, monthTitles, calCount, onClose }) 
         {titles.length > 0 && (
           <div style={{ background: `linear-gradient(135deg, ${C.accent}10, ${C.surface})`, border: `1px solid ${C.accent}44`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 20 }}>🏆</span>
-            <div>
-              <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>PALMARÈS</div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: C.accent }}>
-                Joueur du mois{titles.length > 1 ? ` ×${titles.length}` : ""} — {titles.join(", ")}
-              </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1, marginBottom: 3 }}>PALMARÈS · {titles.length} TITRE{titles.length > 1 ? "S" : ""}</div>
+              {titles.map((t, i) => (
+                <div key={i} style={{ fontSize: 12, fontWeight: 600, color: C.accent, lineHeight: 1.5 }}>🏆 {t}</div>
+              ))}
             </div>
           </div>
         )}
@@ -902,8 +935,12 @@ export default function PadelTracker() {
   const [syncing, setSyncing] = useState(false);
   const [showRules, setShowRules] = useState(false);
   const [palmaresView, setPalmaresView] = useState("mois");
+  const [titrePeriod, setTitrePeriod] = useState("mois");
   const [showAllMonths, setShowAllMonths] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [editDateId, setEditDateId] = useState(null);
+  const [editNameId, setEditNameId] = useState(null);
+  const [editNameVal, setEditNameVal] = useState("");
   const [h2hB, setH2hB] = useState("");
 
   const DEFAULT_DATA = {
@@ -1119,6 +1156,14 @@ export default function PadelTracker() {
   }
 
   function deleteMatch(id) { persist({ ...data, matches: matches.filter(m => m.id !== id) }); }
+  function updateMatchDate(id, isoDate) {
+    persist({ ...data, matches: matches.map(m => m.id === id ? { ...m, date: new Date(isoDate + "T12:00:00").toISOString() } : m) });
+  }
+  function renamePlayer(id, name) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    persist({ ...data, players: players.map(p => p.id === id ? { ...p, name: trimmed } : p) });
+  }
 
   const pName = id => players.find(p => p.id === id)?.name || "?";
 
@@ -2344,7 +2389,7 @@ export default function PadelTracker() {
 
                 {/* ── Sous-menu ── */}
                 <div style={{ display: "flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 4, gap: 4 }}>
-                  {[["mois", "🏆 Joueur du mois"], ["regnes", "👑 Règnes"]].map(([id, label]) => (
+                  {[["mois", "🏆 Titres"], ["regnes", "👑 Règnes"]].map(([id, label]) => (
                     <button key={id} onClick={() => setPalmaresView(id)} style={{
                       flex: 1, padding: "9px 0", borderRadius: 7, fontSize: 12, fontWeight: 700,
                       background: palmaresView === id ? C.accent : "transparent",
@@ -2353,112 +2398,135 @@ export default function PadelTracker() {
                   ))}
                 </div>
 
-                {palmaresView === "mois" && (<>
-                {/* ═══ JOUEUR DU MOIS ═══ */}
-                <div style={{ fontSize: 10, color: C.muted }}>
-                  Score = ΔELO + 3×victoires + (% jeux − 50)÷2 · min. 2 matchs dans le mois
-                </div>
+                {palmaresView === "mois" && (() => {
+                  const { monthly, quarters, years, pName: pn } = computePeriods(players, matches);
+                  const noms = ["", "Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+                  const now = new Date();
+                  const nowMonth = now.toISOString().slice(0, 7);
+                  const nowQ = `${now.getFullYear()}-T${Math.floor(now.getMonth() / 3) + 1}`;
+                  const nowYear = `${now.getFullYear()}`;
+                  const qNames = { 1: "Hiver (janv→mars)", 2: "Printemps (avr→juin)", 3: "Été (juil→sept)", 4: "Automne (oct→déc)" };
 
-                {currentRace && (
-                  <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: C.text }}>COURSE — {monthLabel(nowMonth).toUpperCase()}</span>
-                      <span style={{ fontSize: 10, color: C.green }}>● En cours · {daysLeft} jour{daysLeft > 1 ? "s" : ""} restant{daysLeft > 1 ? "s" : ""}</span>
-                    </div>
-                    {currentRace.slice(0, 5).map((r, i) => {
-                      const rc = ["#c8a84b", "#9eaebd", "#c07a3a"][i] || null;
-                      return (
-                        <div key={r.id} style={{
-                          display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", marginBottom: 6,
-                          background: rc ? `linear-gradient(135deg, ${rc}10, ${C.surface})` : C.surface,
-                          border: `1px solid ${rc ? rc + "44" : C.border}`, borderRadius: 8
-                        }}>
-                          <span style={{
-                            width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
-                            background: rc || "transparent", border: rc ? "none" : `1px solid ${C.border}`,
-                            color: rc ? "#080E0A" : C.muted, fontSize: 11, fontWeight: 700,
-                            display: "inline-flex", alignItems: "center", justifyContent: "center"
-                          }}>{i + 1}</span>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600 }}>{pName(r.id)}</div>
-                            <div style={{ fontSize: 10, color: C.muted }}>ΔELO {r.dElo >= 0 ? "+" : ""}{r.dElo} · {r.wins}V/{r.played}m · {r.pct}% jeux</div>
+                  const monthLabel = m => { const [y, mo] = m.split("-"); return `${noms[parseInt(mo)]} ${y}`; };
+                  const quarterLabel = q => { const [y, t] = q.split("-T"); return `${q.replace("-", " ")} · ${qNames[parseInt(t)]}`; };
+
+                  const daysLeftMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate();
+                  const daysLeftQ = Math.ceil((new Date(now.getFullYear(), (Math.floor(now.getMonth() / 3) + 1) * 3, 0) - now) / 86400000);
+                  const daysLeftYear = Math.ceil((new Date(now.getFullYear(), 11, 31) - now) / 86400000);
+
+                  // Config selon la période choisie
+                  const cfg = {
+                    mois: { data: monthly, currentKey: nowMonth, label: monthLabel, icon: "🏆", title: "JOUEUR DU MOIS", daysLeft: daysLeftMonth, palmLabel: "MOIS" },
+                    trimestre: { data: quarters, currentKey: nowQ, label: quarterLabel, icon: "🏅", title: "JOUEUR DU TRIMESTRE", daysLeft: daysLeftQ, palmLabel: "TRIMESTRES" },
+                    annee: { data: years, currentKey: nowYear, label: y => y, icon: "👑", title: "JOUEUR DE L'ANNÉE", daysLeft: daysLeftYear, palmLabel: "ANNÉES" },
+                  }[titrePeriod];
+
+                  const keys = Object.keys(cfg.data).sort();
+                  const currentRace = cfg.data[cfg.currentKey] || null;
+                  const pastKeys = keys.filter(k => k < cfg.currentKey).reverse();
+
+                  // Détail d'un classement (pour le podium au tap) — mois a le détail complet, trimestre/année juste le score cumulé
+                  const detailFor = key => {
+                    if (titrePeriod === "mois") {
+                      return monthly[key].map(r => [`${pn(r.id)} (ΔELO ${r.dElo >= 0 ? "+" : ""}${r.dElo} · ${r.wins}V/${r.played}m · ${r.pct}% jeux)`, `${r.score}`]);
+                    }
+                    return cfg.data[key].map(r => [`${pn(r.id)}`, `${r.score}`]);
+                  };
+
+                  return (
+                    <>
+                      {/* Sélecteur de période */}
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {[["mois", "🏆 Mois"], ["trimestre", "🏅 Trimestre"], ["annee", "👑 Année"]].map(([id, label]) => (
+                          <button key={id} onClick={() => setTitrePeriod(id)} style={{
+                            flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 11, fontWeight: 700,
+                            border: `1px solid ${titrePeriod === id ? C.accent : C.border}`,
+                            background: titrePeriod === id ? C.accent + "18" : "transparent",
+                            color: titrePeriod === id ? C.accent : C.muted,
+                          }}>{label}</button>
+                        ))}
+                      </div>
+
+                      <div style={{ fontSize: 10, color: C.muted }}>
+                        Score = ΔELO + 3×victoires + (% jeux − 50)÷2{titrePeriod !== "mois" ? " · cumul des mois (0 si mois non joué)" : " · min. 2 matchs dans le mois"}
+                      </div>
+
+                      {/* Course en cours */}
+                      {currentRace ? (
+                        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5 }}>{cfg.icon} COURSE — {cfg.label(cfg.currentKey).toUpperCase()}</span>
+                            <span style={{ fontSize: 10, color: C.green }}>● {cfg.daysLeft}j restant{cfg.daysLeft > 1 ? "s" : ""}</span>
                           </div>
-                          <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 19, color: r.score >= 0 ? C.accent : C.red }}>{r.score}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {!currentRace && (
-                  <p style={{ fontSize: 12, color: C.muted }}>Aucun joueur avec 2+ matchs ce mois-ci — la course démarrera au prochain match.</p>
-                )}
-
-                {pastMonths.length > 0 && (
-                  <>
-                    {/* Tableau des titres */}
-                    {(() => {
-                      const counts = {};
-                      pastMonths.forEach(m => {
-                        const wid = monthlyAll[m][0].id;
-                        counts[wid] = (counts[wid] || 0) + 1;
-                      });
-                      const board = Object.entries(counts).sort(([, a], [, b]) => b - a);
-                      if (board.length === 0) return null;
-                      return (
-                        <div style={{ background: `linear-gradient(135deg, ${C.accent}0C, ${C.card})`, border: `1px solid ${C.accent}33`, borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>TABLEAU DES TITRES</span>
-                          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                            {board.map(([id, n], i) => (
-                              <span key={id} style={{ fontSize: 12, fontWeight: 700, color: i === 0 ? C.accent : C.textSub }}>
-                                🏆 {pName(id)} <span style={{ fontFamily: "'Rajdhani', sans-serif" }}>×{n}</span>
-                              </span>
-                            ))}
+                          <div style={{ marginTop: 6 }}>
+                            {currentRace.slice(0, 5).map((r, i) => {
+                              const rc = ["#c8a84b", "#9eaebd", "#c07a3a"][i] || null;
+                              const detail = titrePeriod === "mois" ? monthly[cfg.currentKey].find(x => x.id === r.id) : null;
+                              return (
+                                <div key={r.id} style={{
+                                  display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", marginBottom: 6,
+                                  background: rc ? `linear-gradient(135deg, ${rc}10, ${C.surface})` : C.surface,
+                                  border: `1px solid ${rc ? rc + "44" : C.border}`, borderRadius: 8
+                                }}>
+                                  <span style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, background: rc || "transparent", border: rc ? "none" : `1px solid ${C.border}`, color: rc ? "#080E0A" : C.muted, fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 12, fontWeight: 600 }}>{pn(r.id)}</div>
+                                    {detail && <div style={{ fontSize: 10, color: C.muted }}>ΔELO {detail.dElo >= 0 ? "+" : ""}{detail.dElo} · {detail.wins}V/{detail.played}m · {detail.pct}% jeux</div>}
+                                  </div>
+                                  <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 19, color: r.score >= 0 ? C.accent : C.red }}>{r.score}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
-                      );
-                    })()}
+                      ) : (
+                        <p style={{ fontSize: 12, color: C.muted }}>Pas encore de scores pour cette période.</p>
+                      )}
 
-                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: C.muted, marginTop: 4 }}>PALMARÈS</div>
-                    {(showAllMonths ? pastMonths : pastMonths.slice(0, 3)).map(month => {
-                      const winner = monthlyAll[month][0];
-                      return (
-                        <div key={month} className="tile-press"
-                          onClick={() => setActiveRecord({
-                            icon: "🏆", title: `JOUEUR DU MOIS — ${monthLabel(month).toUpperCase()}`, color: C.accent,
-                            detail: <Top3 valueColor={C.accent} entries={monthlyAll[month].slice(0, 3).map(r => ({
-                              label: `${pName(r.id)} (ΔELO ${r.dElo >= 0 ? "+" : ""}${r.dElo} · ${r.wins}V/${r.played}m · ${r.pct}% jeux)`,
-                              value: `${r.score}`
-                            }))} />
+                      {/* Palmarès de la période */}
+                      {pastKeys.length > 0 && (
+                        <>
+                          {(() => {
+                            const counts = {};
+                            pastKeys.forEach(k => { const w = cfg.data[k][0].id; counts[w] = (counts[w] || 0) + 1; });
+                            const board = Object.entries(counts).sort(([, a], [, b]) => b - a);
+                            return board.length > 0 ? (
+                              <div style={{ background: `linear-gradient(135deg, ${C.accent}0C, ${C.card})`, border: `1px solid ${C.accent}33`, borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>TABLEAU DES TITRES</span>
+                                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                                  {board.map(([id, n], i) => (
+                                    <span key={id} style={{ fontSize: 12, fontWeight: 700, color: i === 0 ? C.accent : C.textSub }}>
+                                      {cfg.icon} {pn(id)} <span style={{ fontFamily: "'Rajdhani', sans-serif" }}>×{n}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null;
+                          })()}
+
+                          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: C.muted, marginTop: 4 }}>PALMARÈS · {cfg.palmLabel}</div>
+                          {pastKeys.map(key => {
+                            const winner = cfg.data[key][0];
+                            return (
+                              <div key={key} className="tile-press"
+                                onClick={() => setActiveRecord({ icon: cfg.icon, title: `${cfg.title} — ${cfg.label(key).toUpperCase()}`, color: C.accent, detail: <Top3 valueColor={C.accent} entries={detailFor(key).slice(0, 3).map(([label, value]) => ({ label, value }))} /> })}
+                                style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer", background: `linear-gradient(135deg, ${C.accent}0A, ${C.card})`, border: `1px solid ${C.accent}30`, borderRadius: 10, padding: "11px 14px" }}>
+                                <span style={{ fontSize: 18 }}>{cfg.icon}</span>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>{cfg.label(key).toUpperCase()}</div>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>{pn(winner.id)}</div>
+                                </div>
+                                <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 16, color: C.accent }}>{winner.score}</span>
+                                <span style={{ fontSize: 14, color: C.muted }}>›</span>
+                              </div>
+                            );
                           })}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 12, cursor: "pointer",
-                            background: `linear-gradient(135deg, ${C.accent}10, ${C.card})`,
-                            border: `1px solid ${C.accent}44`, borderRadius: 10, padding: "12px 14px"
-                          }}>
-                          <span style={{ fontSize: 22 }}>🏆</span>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>{monthLabel(month).toUpperCase()}</div>
-                            <div style={{ fontSize: 14, fontWeight: 700, color: C.accent }}>{pName(winner.id)}</div>
-                          </div>
-                          <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 18, color: C.accent }}>{winner.score}</span>
-                          <span style={{ fontSize: 14, color: C.muted }}>›</span>
-                        </div>
-                      );
-                    })}
-                    {pastMonths.length > 3 && !showAllMonths && (
-                      <button onClick={() => setShowAllMonths(true)} style={{ width: "100%", background: "transparent", border: `1px dashed ${C.border}`, color: C.muted, fontSize: 12, fontWeight: 600, padding: "10px", borderRadius: 8 }}>
-                        Voir tout le palmarès ({pastMonths.length} mois) ▾
-                      </button>
-                    )}
-                    {pastMonths.length > 3 && showAllMonths && (
-                      <button onClick={() => setShowAllMonths(false)} style={{ width: "100%", background: "transparent", border: `1px dashed ${C.border}`, color: C.muted, fontSize: 12, fontWeight: 600, padding: "10px", borderRadius: 8 }}>
-                        Replier ▴
-                      </button>
-                    )}
-                    <div style={{ fontSize: 10, color: C.muted, textAlign: "center" }}>Appuie sur un mois pour voir le podium complet</div>
-                  </>
-                )}
-                </>)}
+                          <div style={{ fontSize: 10, color: C.muted, textAlign: "center" }}>Appuie pour voir le podium complet</div>
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
 
                 {palmaresView === "regnes" && (<>
 
@@ -2774,7 +2842,19 @@ export default function PadelTracker() {
                         <span style={{ fontSize: 11, color: C.muted }}>{dateStr}</span>
                         {m.superTieBreak && <span style={{ fontSize: 10, fontWeight: 700, color: C.accent, background: C.accent + "18", border: `1px solid ${C.accent}44`, borderRadius: 4, padding: "1px 6px" }}>STB</span>}
                       </div>
-                      <button onClick={() => deleteMatch(m.id)} style={{ background: "transparent", color: C.muted, fontSize: 11, padding: "2px 6px" }}>✕</button>
+                      {isAdmin && (
+                        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                          {editDateId === m.id ? (
+                            <input type="date" defaultValue={new Date(m.date).toISOString().slice(0, 10)}
+                              onChange={e => { updateMatchDate(m.id, e.target.value); setEditDateId(null); }}
+                              onBlur={() => setEditDateId(null)} autoFocus
+                              style={{ fontSize: 11, padding: "2px 4px" }} />
+                          ) : (
+                            <button onClick={() => setEditDateId(m.id)} style={{ background: "transparent", color: C.muted, fontSize: 13, padding: "2px 6px" }}>✎</button>
+                          )}
+                          <button onClick={() => deleteMatch(m.id)} style={{ background: "transparent", color: C.muted, fontSize: 11, padding: "2px 6px" }}>✕</button>
+                        </div>
+                      )}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <div style={{ flex: 1, textAlign: "right" }}>
@@ -2831,20 +2911,40 @@ export default function PadelTracker() {
                 {syncing && <div style={{ fontSize: 11, color: C.accent, marginTop: 8 }}>⏳ Synchronisation…</div>}
                 {cloudError && <div style={{ fontSize: 11, color: C.red, marginTop: 8 }}>⚠️ Connexion au cloud impossible — données par défaut affichées.</div>}
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input placeholder="Nom du joueur" value={newPlayer} onChange={e => setNewPlayer(e.target.value)} onKeyDown={e => e.key === "Enter" && addPlayer()} />
-                <button onClick={addPlayer} style={{ background: C.accent, color: "#080E0A", padding: "8px 16px", whiteSpace: "nowrap" }}>Ajouter</button>
-              </div>
+              {isAdmin && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input placeholder="Nom du joueur" value={newPlayer} onChange={e => setNewPlayer(e.target.value)} onKeyDown={e => e.key === "Enter" && addPlayer()} />
+                  <button onClick={addPlayer} style={{ background: C.accent, color: "#080E0A", padding: "8px 16px", whiteSpace: "nowrap" }}>Ajouter</button>
+                </div>
+              )}
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {players.length === 0 && <p style={{ color: C.muted, fontSize: 13 }}>Aucun joueur encore.</p>}
                 {players.map(p => {
                   const st = eloStats.find(s => s.id === p.id);
+                  const editing = editNameId === p.id;
                   return (
                     <div key={p.id} style={{ display: "flex", alignItems: "center", background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", gap: 10 }}>
-                      <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{p.name}</span>
-                      <span style={{ fontSize: 12, color: C.muted }}>{st?.played || 0} match{st?.played !== 1 ? "s" : ""}</span>
-                      <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 18, color: C.accent }}>{st?.elo ?? ELO_START}</span>
-                      <button onClick={() => removePlayer(p.id)} style={{ background: C.red + "22", color: C.red, padding: "4px 10px", fontSize: 12 }}>Retirer</button>
+                      {editing ? (
+                        <>
+                          <input value={editNameVal} onChange={e => setEditNameVal(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") { renamePlayer(p.id, editNameVal); setEditNameId(null); } }}
+                            autoFocus style={{ flex: 1, fontSize: 14 }} />
+                          <button onClick={() => { renamePlayer(p.id, editNameVal); setEditNameId(null); }} style={{ background: C.green + "22", color: C.green, padding: "4px 10px", fontSize: 12 }}>✓</button>
+                          <button onClick={() => setEditNameId(null)} style={{ background: C.border, color: C.muted, padding: "4px 10px", fontSize: 12 }}>✕</button>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{p.name}</span>
+                          <span style={{ fontSize: 12, color: C.muted }}>{st?.played || 0} match{st?.played !== 1 ? "s" : ""}</span>
+                          <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 18, color: C.accent }}>{st?.elo ?? ELO_START}</span>
+                          {isAdmin && (
+                            <>
+                              <button onClick={() => { setEditNameId(p.id); setEditNameVal(p.name); }} style={{ background: "transparent", color: C.muted, fontSize: 14, padding: "4px 6px" }}>✎</button>
+                              <button onClick={() => removePlayer(p.id)} style={{ background: C.red + "22", color: C.red, padding: "4px 10px", fontSize: 12 }}>Retirer</button>
+                            </>
+                          )}
+                        </>
+                      )}
                     </div>
                   );
                 })}
@@ -2923,12 +3023,20 @@ export default function PadelTracker() {
       <PlayerModal player={selectedPlayer} qualifiedOnly={showOnlyQualified} calCount={eloStats.calCount || 0}
         monthTitles={(() => {
           if (!selectedPlayer) return [];
-          const monthlyAll = computeMonthly(players, matches);
-          const nowMonth = new Date().toISOString().slice(0, 7);
+          const { monthly, quarters, years } = computePeriods(players, matches);
           const noms = ["", "Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
-          return Object.keys(monthlyAll).sort()
-            .filter(m => m < nowMonth && monthlyAll[m][0].id === selectedPlayer.id)
-            .map(m => `${noms[parseInt(m.split("-")[1])]} ${m.split("-")[0]}`);
+          const now = new Date();
+          const nowMonth = now.toISOString().slice(0, 7);
+          const nowQ = `${now.getFullYear()}-T${Math.floor(now.getMonth() / 3) + 1}`;
+          const nowYear = `${now.getFullYear()}`;
+          const titles = [];
+          Object.keys(monthly).sort().filter(m => m < nowMonth && monthly[m][0].id === selectedPlayer.id)
+            .forEach(m => titles.push(`Mois : ${noms[parseInt(m.split("-")[1])]} ${m.split("-")[0]}`));
+          Object.keys(quarters).sort().filter(q => q < nowQ && quarters[q][0].id === selectedPlayer.id)
+            .forEach(q => titles.push(`Trimestre : ${q.replace("-", " ")}`));
+          Object.keys(years).sort().filter(y => y < nowYear && years[y][0].id === selectedPlayer.id)
+            .forEach(y => titles.push(`Année : ${y}`));
+          return titles;
         })()}
         onClose={() => setSelectedPlayer(null)} />
     </>
