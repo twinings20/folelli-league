@@ -405,8 +405,19 @@ function computeElo(players, matches) {
 // Agrège les scores mensuels en trimestres et années
 // Trimestres calendaires : T1 janv-mars, T2 avr-juin, T3 juil-sept, T4 oct-déc
 function computePeriods(players, matches) {
-  const monthly = computeMonthly(players, matches); // { "YYYY-MM": [ {id, score, dElo, wins, played, pct}, ... ] }
+  const rawMonthly = computeMonthly(players, matches); // { "YYYY-MM": [ {id, score, dElo, wins, played, pct}, ... ] }
   const pName = id => players.find(p => p.id === id)?.name || "?";
+
+  // Éligibilité aux titres : réservée aux joueurs du classement officiel (MIN_MATCHES en carrière)
+  const careerCount = {};
+  matches.forEach(m => [m.a1, m.a2, m.b1, m.b2].forEach(id => { careerCount[id] = (careerCount[id] || 0) + 1; }));
+  const eligible = id => (careerCount[id] || 0) >= MIN_MATCHES;
+
+  const monthly = {};
+  Object.entries(rawMonthly).forEach(([month, rows]) => {
+    const kept = rows.filter(r => eligible(r.id));
+    if (kept.length > 0) monthly[month] = kept;
+  });
 
   const quarterOf = m => Math.floor((parseInt(m.split("-")[1]) - 1) / 3) + 1;
 
@@ -2448,7 +2459,7 @@ export default function PadelTracker() {
                       </div>
 
                       <div style={{ fontSize: 10, color: C.muted }}>
-                        Score = ΔELO + 3×victoires + (% jeux − 50)÷2{titrePeriod !== "mois" ? " · cumul des mois (0 si mois non joué)" : " · min. 2 matchs dans le mois"}
+                        Score = ΔELO + 3×victoires + (% jeux − 50)÷2{titrePeriod !== "mois" ? " · cumul des mois (0 si mois non joué)" : " · min. 2 matchs dans le mois"} · réservé aux joueurs classés ({MIN_MATCHES}+ matchs)
                       </div>
 
                       {/* Course en cours */}
