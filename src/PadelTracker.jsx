@@ -2192,9 +2192,9 @@ export default function PadelTracker() {
             // Generic top-3 detail renderer
             const Top3 = ({ entries, valueColor }) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {entries.slice(0, 3).map((e, i) => (
+                {entries.map((e, i) => (
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, border: `1px solid ${i === 0 ? C.accent + "55" : C.border}`, borderRadius: 8, padding: "10px 12px" }}>
-                    <span style={{ fontSize: 20 }}>{medals[i]}</span>
+                    <span style={{ fontSize: 20, width: 24, textAlign: "center" }}>{medals[i] || <span style={{ fontSize: 13, color: C.muted, fontWeight: 700 }}>{i + 1}</span>}</span>
                     <span style={{ flex: 1, fontSize: 13, fontWeight: i === 0 ? 700 : 500, color: C.text }}>{e.label}</span>
                     <span style={{ fontSize: 13, fontWeight: 700, color: valueColor || C.accent }}>{e.value}</span>
                   </div>
@@ -2413,9 +2413,9 @@ export default function PadelTracker() {
 
             const Top3 = ({ entries, valueColor }) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {entries.slice(0, 3).map((e, i) => (
+                {entries.map((e, i) => (
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, border: `1px solid ${i === 0 ? C.accent + "55" : C.border}`, borderRadius: 8, padding: "10px 12px" }}>
-                    <span style={{ fontSize: 20 }}>{medals[i]}</span>
+                    <span style={{ fontSize: 20, width: 24, textAlign: "center" }}>{medals[i] || <span style={{ fontSize: 13, color: C.muted, fontWeight: 700 }}>{i + 1}</span>}</span>
                     <span style={{ flex: 1, fontSize: 13, fontWeight: i === 0 ? 700 : 500, color: C.text }}>{e.label}</span>
                     <span style={{ fontSize: 13, fontWeight: 700, color: valueColor || C.accent }}>{e.value}</span>
                   </div>
@@ -2585,7 +2585,7 @@ export default function PadelTracker() {
                         const Trophy = ({ icon, title, sub, color, top3, valueFmt, empty }) => (
                           <div className="tile-press" onClick={() => top3.length > 0 && setActiveRecord({
                             icon, title: `${title} — ${year}`, color,
-                            detail: <Top3 valueColor={color} entries={top3.slice(0, 3).map(e => ({ label: `${e.name} (${e.played} matchs)`, value: valueFmt(e.val) }))} />
+                            detail: <Top3 valueColor={color} entries={top3.slice(0, 5).map(e => ({ label: `${e.name} (${e.played} matchs)`, value: valueFmt(e.val) }))} />
                           })} style={{
                             background: `linear-gradient(150deg, ${color}12, ${C.card})`, border: `1px solid ${color}44`,
                             borderRadius: 12, padding: 14, cursor: top3.length > 0 ? "pointer" : "default", marginBottom: 8
@@ -2607,13 +2607,47 @@ export default function PadelTracker() {
                         return (
                           <>
                             <div style={{ fontFamily: "'Bebas Neue'", fontSize: 18, letterSpacing: 2, color: C.accent, marginTop: 6 }}>🏆 TROPHÉES {year}</div>
-                            <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>Remis à zéro chaque année · appuie pour le top 3</div>
+                            <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>Remis à zéro chaque année · appuie pour le top 5</div>
                             <Trophy icon="⚔️" title="ATTAQUANT DE L'ANNÉE" sub="Jeux gagnés par set · min. 5 matchs" color={C.red}
                               top3={attaquant} valueFmt={v => v.toFixed(1)} empty="Aucun joueur à 5 matchs cette année." />
                             <Trophy icon="🧱" title="DÉFENSEUR DE L'ANNÉE" sub="Jeux encaissés par set · min. 5 matchs" color={C.blue}
                               top3={defenseur} valueFmt={v => v.toFixed(1)} empty="Aucun joueur à 5 matchs cette année." />
                             <Trophy icon="📈" title="PROGRESSION DE L'ANNÉE" sub={year === 2026 ? "Gain d'ELO depuis le 3e match" : "Gain d'ELO sur l'année"} color={C.green}
                               top3={progression} valueFmt={v => `${v >= 0 ? "+" : ""}${v}`} empty="Pas encore assez de matchs." />
+
+                            {/* Palmarès des trophées des années passées (top 3 archivé) */}
+                            {(() => {
+                              const allYears = [...new Set(matches.map(m => new Date(m.date).getFullYear()))].filter(y => y < year).sort((a, b) => b - a);
+                              if (allYears.length === 0) return null;
+                              const line = (yr, icon, title, color, top3, valueFmt) => top3.length > 0 ? (
+                                <div className="tile-press" onClick={() => setActiveRecord({
+                                  icon, title: `${title} — ${yr}`, color,
+                                  detail: <Top3 valueColor={color} entries={top3.slice(0, 3).map(e => ({ label: `${e.name} (${e.played} matchs)`, value: valueFmt(e.val) }))} />
+                                })} style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", cursor: "pointer", marginBottom: 5 }}>
+                                  <span style={{ fontSize: 15 }}>{icon}</span>
+                                  <span style={{ fontSize: 11, color: C.muted, fontWeight: 700, width: 78, flexShrink: 0 }}>{title.split(" ")[0]}</span>
+                                  <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color }}>{top3[0].name}</span>
+                                  <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 13, color }}>{valueFmt(top3[0].val)}</span>
+                                  <span style={{ fontSize: 13, color: C.muted }}>›</span>
+                                </div>
+                              ) : null;
+                              return (
+                                <>
+                                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: C.muted, marginTop: 10 }}>PALMARÈS DES TROPHÉES</div>
+                                  {allYears.map(yr => {
+                                    const t = computeYearTrophies(players, matches, yr);
+                                    return (
+                                      <div key={yr} style={{ marginTop: 6 }}>
+                                        <div style={{ fontSize: 12, fontWeight: 700, color: C.accent, marginBottom: 4 }}>{yr}</div>
+                                        {line(yr, "⚔️", "ATTAQUANT", C.red, t.attaquant, v => v.toFixed(1))}
+                                        {line(yr, "🧱", "DÉFENSEUR", C.blue, t.defenseur, v => v.toFixed(1))}
+                                        {line(yr, "📈", "PROGRESSION", C.green, t.progression, v => `${v >= 0 ? "+" : ""}${v}`)}
+                                      </div>
+                                    );
+                                  })}
+                                </>
+                              );
+                            })()}
                           </>
                         );
                       })()}
