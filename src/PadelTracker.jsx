@@ -219,8 +219,8 @@ function computeElo(players, matches) {
     }).length;
     const losses = (played[p.id] || 0) - wins;
     const elo = ratings[p.id] ?? ELO_START;
-    // Jeux gagnés / perdus
-    let gamesW = 0, gamesL = 0;
+    // Jeux gagnés / perdus + nombre de sets joués (hors STB)
+    let gamesW = 0, gamesL = 0, setsPlayed = 0;
     sorted.forEach(m => {
       const inA = [m.a1, m.a2].includes(p.id);
       const inB = [m.b1, m.b2].includes(p.id);
@@ -229,6 +229,7 @@ function computeElo(players, matches) {
       realSets.forEach(s => {
         if (inA) { gamesW += s.a; gamesL += s.b; }
         else     { gamesW += s.b; gamesL += s.a; }
+        setsPlayed++;
       });
     });
     const hist = history[p.id] || [];
@@ -313,7 +314,7 @@ function computeElo(players, matches) {
       if (formats[fmt]) { if (won) formats[fmt].w++; else formats[fmt].l++; }
     });
 
-    return { id: p.id, name: p.name, elo, played: played[p.id] || 0, wins, losses, lastDelta, history: hist, streak, streakType, bestPartner, beteNoire, victime, rival, topPartners, gamesW, gamesL, last5, formats, rankHistory, rankHistoryQ, curvePoints };
+    return { id: p.id, name: p.name, elo, played: played[p.id] || 0, wins, losses, lastDelta, history: hist, streak, streakType, bestPartner, beteNoire, victime, rival, topPartners, gamesW, gamesL, setsPlayed, last5, formats, rankHistory, rankHistoryQ, curvePoints };
   });
 
   stats.sort((a, b) => b.elo - a.elo || b.wins - a.wins);
@@ -404,6 +405,84 @@ function computeElo(players, matches) {
 // Score = ΔELO du mois + 3×victoires + (% jeux gagnés − 50)/2 · min 2 matchs
 // Agrège les scores mensuels en trimestres et années
 // Trimestres calendaires : T1 janv-mars, T2 avr-juin, T3 juil-sept, T4 oct-déc
+// Trophées de l'année : Attaquant (jeux gagnés/set), Défenseur (jeux encaissés/set), Progression
+// Seuil 5 matchs/an pour Attaquant & Défenseur. Progression 2026 : départ = ELO au 3e match (éligible dès 4 matchs).
+function computeYearTrophies(players, matches, year) {
+  const sorted = [...matches].map((m, i) => ({ ...m, _i: i }))
+    .sort((a, b) => new Date(a.date) - new Date(b.date) || a._i - b._i);
+
+  // Reconstruire les ELO chronologiquement pour connaître l'ELO à chaque match d'un joueur
+  const K = 32, START = 1000;
+  const ratings = {};
+  players.forEach(p => { ratings[p.id] = START; });
+  const eloAtMatch = {}; // playerId -> [{date, eloBefore, eloAfter, year}]
+  players.forEach(p => { eloAtMatch[p.id] = []; });
+
+  sorted.forEach(m => {
+    const aS = m.sets.filter(s => s.a > s.b).length;
+    const bS = m.sets.filter(s => s.b > s.a).length;
+    const aWin = aS > bS; const total = aS + bS;
+    const kM = m.superTieBreak ? 0.70 : (total === 1 ? 0.70 : (total === 2 ? 1.0 : 0.85));
+    const avgA = (ratings[m.a1] + ratings[m.a2]) / 2;
+    const avgB = (ratings[m.b1] + ratings[m.b2]) / 2;
+    const eA = 1 / (1 + Math.pow(10, (avgB - avgA) / 400));
+    const dA = Math.round(K * kM * ((aWin ? 1 : 0) - eA));
+    const dB = Math.round(K * kM * ((aWin ? 0 : 1) - (1 - eA)));
+    const y = new Date(m.date).getFullYear();
+    [m.a1, m.a2].forEach(id => { eloAtMatch[id].push({ before: ratings[id], after: ratings[id] + dA, year: y }); ratings[id] += dA; });
+    [m.b1, m.b2].forEach(id => { eloAtMatch[id].push({ before: ratings[id], after: ratings[id] + dB, year: y }); ratings[id] += dB; });
+  });
+
+  // Stats de jeux par set, sur l'année demandée
+  const stat = {};
+  players.forEach(p => { stat[p.id] = { gW: 0, gL: 0, sets: 0, played: 0 }; });
+  sorted.forEach(m => {
+    if (new Date(m.date).getFullYear() !== year) return;
+    const real = m.superTieBreak ? m.sets.slice(0, -1) : m.sets;
+    [[m.a1, "A"], [m.a2, "A"], [m.b1, "B"], [m.b2, "B"]].forEach(([id, team]) => {
+      if (!stat[id]) return;
+      stat[id].played++;
+      real.forEach(s => {
+        const mine = team === "A" ? s.a : s.b;
+        const theirs = team === "A" ? s.b : s.a;
+        stat[id].gW += mine; stat[id].gL += theirs; stat[id].sets++;
+      });
+    });
+  });
+
+  const pName = id => players.find(p => p.id === id)?.name || "?";
+
+  // Attaquant & Défenseur : seuil 5 matchs/an, égalité → plus de matchs
+  const eligibleAD = players.map(p => p.id).filter(id => stat[id].played >= 5 && stat[id].sets > 0);
+  const attaquant = eligibleAD
+    .map(id => ({ id, name: pName(id), val: stat[id].gW / stat[id].sets, played: stat[id].played, sets: stat[id].sets }))
+    .sort((a, b) => b.val - a.val || b.played - a.played);
+  const defenseur = eligibleAD
+    .map(id => ({ id, name: pName(id), val: stat[id].gL / stat[id].sets, played: stat[id].played, sets: stat[id].sets }))
+    .sort((a, b) => a.val - b.val || b.played - a.played);
+
+  // Progression
+  const progression = players.map(p => p.id).map(id => {
+    const ms = eloAtMatch[id].filter(e => e.year === year);
+    if (ms.length === 0) return null;
+    const careerThisYearCount = ms.length;
+    let base;
+    if (year === 2026) {
+      // départ = ELO au 3e match (before), éligible dès le 4e match de carrière
+      const all = eloAtMatch[id];
+      if (all.length < 4) return null;
+      base = all[2].before; // ELO avant le 3e match = point de départ
+    } else {
+      // départ = ELO au 1er janvier = before du 1er match de l'année
+      base = ms[0].before;
+    }
+    const current = eloAtMatch[id][eloAtMatch[id].length - 1].after;
+    return { id, name: pName(id), val: current - base, played: careerThisYearCount };
+  }).filter(Boolean).sort((a, b) => b.val - a.val || b.played - a.played);
+
+  return { attaquant, defenseur, progression };
+}
+
 function computePeriods(players, matches) {
   const rawMonthly = computeMonthly(players, matches); // { "YYYY-MM": [ {id, score, dElo, wins, played, pct}, ... ] }
   const pName = id => players.find(p => p.id === id)?.name || "?";
@@ -2134,7 +2213,10 @@ export default function PadelTracker() {
             const rMostPlayed = [...eloStats].filter(p=>p.played>0).sort((a,b) => b.played - a.played);
             const rBestWR     = [...qualified3].sort((a,b) => (b.wins/b.played) - (a.wins/a.played));
             const rWorstWR    = [...qualified3].sort((a,b) => (a.wins/a.played) - (b.wins/b.played));
-            const rBestDiff   = [...qualified3].sort((a,b) => (b.gamesW-b.gamesL) - (a.gamesW-a.gamesL));
+            const gwPerSet = p => p.setsPlayed > 0 ? p.gamesW / p.setsPlayed : 0;
+            const glPerSet = p => p.setsPlayed > 0 ? p.gamesL / p.setsPlayed : 0;
+            const rGwPerSet = [...qualified3].filter(p => p.setsPlayed > 0).sort((a,b) => gwPerSet(b) - gwPerSet(a));
+            const rGlPerSet = [...qualified3].filter(p => p.setsPlayed > 0).sort((a,b) => glPerSet(a) - glPerSet(b));
             const gamePct = p => (p.gamesW + p.gamesL) > 0 ? p.gamesW / (p.gamesW + p.gamesL) : 0;
             const rBestPct = [...qualified3].sort((a,b) => gamePct(b) - gamePct(a));
             const rWorstPct = [...qualified3].sort((a,b) => gamePct(a) - gamePct(b));
@@ -2228,8 +2310,10 @@ export default function PadelTracker() {
                 detail: <Top3 valueColor={C.green} entries={rBestWR.map(p => ({ label: `${p.name} (${p.wins}V/${p.losses}D)`, value: `${Math.round(p.wins/p.played*100)}%` }))} /> },
               rWorstWR[0] && { icon: "😬", title: "Pire win rate", holder: rWorstWR[0].name, value: `${Math.round(rWorstWR[0].wins/rWorstWR[0].played*100)}%`, color: C.red,
                 detail: <Top3 valueColor={C.red} entries={rWorstWR.map(p => ({ label: `${p.name} (${p.wins}V/${p.losses}D)`, value: `${Math.round(p.wins/p.played*100)}%` }))} /> },
-              rBestDiff[0] && { icon: "🎯", title: "Meilleur diff. jeux", holder: rBestDiff[0].name, value: `+${rBestDiff[0].gamesW - rBestDiff[0].gamesL}`, color: C.green,
-                detail: <Top3 valueColor={C.green} entries={rBestDiff.map(p => ({ label: `${p.name} (${p.gamesW}G/${p.gamesL}P)`, value: `${(p.gamesW-p.gamesL) > 0 ? "+" : ""}${p.gamesW-p.gamesL}` }))} /> },
+              rGwPerSet[0] && { icon: "🎯", title: "Jeux gagnés / set", holder: rGwPerSet[0].name, value: gwPerSet(rGwPerSet[0]).toFixed(1), color: C.green,
+                detail: <Top3 valueColor={C.green} entries={rGwPerSet.map(p => ({ label: `${p.name} (${p.setsPlayed} sets)`, value: gwPerSet(p).toFixed(2) }))} /> },
+              rGlPerSet[0] && { icon: "🧱", title: "Moins de jeux encaissés / set", holder: rGlPerSet[0].name, value: glPerSet(rGlPerSet[0]).toFixed(1), color: C.blue,
+                detail: <Top3 valueColor={C.blue} entries={rGlPerSet.map(p => ({ label: `${p.name} (${p.setsPlayed} sets)`, value: glPerSet(p).toFixed(2) }))} /> },
               rBestPct[0] && { icon: "⚔️", title: "Meilleur % de jeux gagnés", holder: rBestPct[0].name, value: `${Math.round(gamePct(rBestPct[0]) * 100)}%`, color: C.green,
                 detail: <Top3 valueColor={C.green} entries={rBestPct.map(p => ({ label: `${p.name} (${p.gamesW}G/${p.gamesL}P)`, value: `${Math.round(gamePct(p) * 100)}%` }))} /> },
               rWorstPct[0] && { icon: "🛡️", title: "Pire % de jeux gagnés", holder: rWorstPct[0].name, value: `${Math.round(gamePct(rWorstPct[0]) * 100)}%`, color: C.red,
@@ -2493,6 +2577,46 @@ export default function PadelTracker() {
                       ) : (
                         <p style={{ fontSize: 12, color: C.muted }}>Pas encore de scores pour cette période.</p>
                       )}
+
+                      {/* ── Trophées de l'année (volet Année uniquement) ── */}
+                      {titrePeriod === "annee" && (() => {
+                        const year = parseInt(cfg.currentKey);
+                        const { attaquant, defenseur, progression } = computeYearTrophies(players, matches, year);
+                        const Trophy = ({ icon, title, sub, color, top3, valueFmt, empty }) => (
+                          <div className="tile-press" onClick={() => top3.length > 0 && setActiveRecord({
+                            icon, title: `${title} — ${year}`, color,
+                            detail: <Top3 valueColor={color} entries={top3.slice(0, 3).map(e => ({ label: `${e.name} (${e.played} matchs)`, value: valueFmt(e.val) }))} />
+                          })} style={{
+                            background: `linear-gradient(150deg, ${color}12, ${C.card})`, border: `1px solid ${color}44`,
+                            borderRadius: 12, padding: 14, cursor: top3.length > 0 ? "pointer" : "default", marginBottom: 8
+                          }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                              <div style={{ width: 44, height: 44, flexShrink: 0, borderRadius: 12, background: `${color}1c`, border: `1px solid ${color}55`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>{icon}</div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 10, color, fontWeight: 700, letterSpacing: 1.5 }}>{title}</div>
+                                <div style={{ fontSize: 15, fontWeight: 700, marginTop: 1 }}>{top3.length > 0 ? top3[0].name : "—"}</div>
+                                <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }}>{sub}</div>
+                              </div>
+                              {top3.length > 0 && (
+                                <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 22, color, flexShrink: 0 }}>{valueFmt(top3[0].val)}</div>
+                              )}
+                            </div>
+                            {top3.length === 0 && <div style={{ fontSize: 10, color: C.muted, marginTop: 6 }}>{empty}</div>}
+                          </div>
+                        );
+                        return (
+                          <>
+                            <div style={{ fontFamily: "'Bebas Neue'", fontSize: 18, letterSpacing: 2, color: C.accent, marginTop: 6 }}>🏆 TROPHÉES {year}</div>
+                            <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>Remis à zéro chaque année · appuie pour le top 3</div>
+                            <Trophy icon="⚔️" title="ATTAQUANT DE L'ANNÉE" sub="Jeux gagnés par set · min. 5 matchs" color={C.red}
+                              top3={attaquant} valueFmt={v => v.toFixed(1)} empty="Aucun joueur à 5 matchs cette année." />
+                            <Trophy icon="🧱" title="DÉFENSEUR DE L'ANNÉE" sub="Jeux encaissés par set · min. 5 matchs" color={C.blue}
+                              top3={defenseur} valueFmt={v => v.toFixed(1)} empty="Aucun joueur à 5 matchs cette année." />
+                            <Trophy icon="📈" title="PROGRESSION DE L'ANNÉE" sub={year === 2026 ? "Gain d'ELO depuis le 3e match" : "Gain d'ELO sur l'année"} color={C.green}
+                              top3={progression} valueFmt={v => `${v >= 0 ? "+" : ""}${v}`} empty="Pas encore assez de matchs." />
+                          </>
+                        );
+                      })()}
 
                       {/* Palmarès de la période */}
                       {pastKeys.length > 0 && (
