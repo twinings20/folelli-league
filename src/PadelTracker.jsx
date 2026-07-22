@@ -2173,7 +2173,8 @@ export default function PadelTracker() {
             }).filter(m => m.eloGap > 0).sort((a, b) => b.eloGap - a.eloGap);
 
             // Per-player max streaks
-            const streakStats = eloStats.map(p => {
+            const qualified3 = eloStats.filter(p => p.played >= 3);
+            const streakStats = qualified3.map(p => {
               let curW = 0, curL = 0, maxW = 0, maxL = 0;
               sorted.forEach(m => {
                 const inA = [m.a1,m.a2].includes(p.id), inB = [m.b1,m.b2].includes(p.id);
@@ -2186,13 +2187,12 @@ export default function PadelTracker() {
               return { name: p.name, maxW, maxL };
             });
 
-            const qualified3 = eloStats.filter(p => p.played >= 3);
             const medals = ["🥇", "🥈", "🥉"];
 
             // Generic top-3 detail renderer
-            const Top3 = ({ entries, valueColor }) => (
+            const Top3 = ({ entries, valueColor, limit = 5 }) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {entries.map((e, i) => (
+                {entries.slice(0, limit).map((e, i) => (
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, border: `1px solid ${i === 0 ? C.accent + "55" : C.border}`, borderRadius: 8, padding: "10px 12px" }}>
                     <span style={{ fontSize: 20, width: 24, textAlign: "center" }}>{medals[i] || <span style={{ fontSize: 13, color: C.muted, fontWeight: 700 }}>{i + 1}</span>}</span>
                     <span style={{ flex: 1, fontSize: 13, fontWeight: i === 0 ? 700 : 500, color: C.text }}>{e.label}</span>
@@ -2242,8 +2242,8 @@ export default function PadelTracker() {
               });
             });
             const pctSets = id => (setsWon[id] + setsLost[id]) > 0 ? setsWon[id] / (setsWon[id] + setsLost[id]) : 0;
-            const rBagelsFor = eloStats.filter(p => bagelsFor[p.id] > 0).sort((a, b) => bagelsFor[b.id] - bagelsFor[a.id]);
-            const rBagelsAgainst = eloStats.filter(p => bagelsAgainst[p.id] > 0).sort((a, b) => bagelsAgainst[b.id] - bagelsAgainst[a.id]);
+            const rBagelsFor = qualified3.filter(p => bagelsFor[p.id] > 0).sort((a, b) => bagelsFor[b.id] - bagelsFor[a.id]);
+            const rBagelsAgainst = qualified3.filter(p => bagelsAgainst[p.id] > 0).sort((a, b) => bagelsAgainst[b.id] - bagelsAgainst[a.id]);
             const rBestSets = [...qualified3].sort((a, b) => pctSets(b.id) - pctSets(a.id));
             const rWorstSets = [...qualified3].sort((a, b) => pctSets(a.id) - pctSets(b.id));
 
@@ -2262,7 +2262,7 @@ export default function PadelTracker() {
               const losers = aS > bS ? [m.b1, m.b2] : [m.a1, m.a2];
               if (losers.includes(topId)) winners.forEach(w => { if (regicide[w] !== undefined) regicide[w]++; });
             });
-            const rRegicide = eloStats.filter(p => regicide[p.id] > 0).sort((a, b) => regicide[b.id] - regicide[a.id]);
+            const rRegicide = qualified3.filter(p => regicide[p.id] > 0).sort((a, b) => regicide[b.id] - regicide[a.id]);
 
             // Calendrier le plus dur : formule hybride (déjà calculée dans eloStats)
             const oppEloStats = qualified3
@@ -2394,7 +2394,7 @@ export default function PadelTracker() {
                 </div>
 
                 <div style={{ fontSize: 11, color: C.muted, textAlign: "center", marginTop: 4 }}>
-                  Appuie sur un trophée pour voir le top 3
+                  Appuie sur un trophée pour voir le top 5
                 </div>
 
                 <RecordModal record={activeRecord} onClose={() => setActiveRecord(null)} />
@@ -2411,9 +2411,9 @@ export default function PadelTracker() {
               <div style={{ fontFamily: "'Bebas Neue'", fontSize: 16, letterSpacing: 3, color: C.accent, marginTop: 8 }}>{title}</div>
             );
 
-            const Top3 = ({ entries, valueColor }) => (
+            const Top3 = ({ entries, valueColor, limit = 5 }) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {entries.map((e, i) => (
+                {entries.slice(0, limit).map((e, i) => (
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, background: C.surface, border: `1px solid ${i === 0 ? C.accent + "55" : C.border}`, borderRadius: 8, padding: "10px 12px" }}>
                     <span style={{ fontSize: 20, width: 24, textAlign: "center" }}>{medals[i] || <span style={{ fontSize: 13, color: C.muted, fontWeight: 700 }}>{i + 1}</span>}</span>
                     <span style={{ flex: 1, fontSize: 13, fontWeight: i === 0 ? 700 : 500, color: C.text }}>{e.label}</span>
