@@ -2211,15 +2211,10 @@ export default function PadelTracker() {
             const rTightest   = [...matchStats].sort((a,b) => a.diff - b.diff);
             const rLongest    = [...matchStats].sort((a,b) => b.sets.length - a.sets.length || (b.totalGamesA+b.totalGamesB) - (a.totalGamesA+a.totalGamesB));
             const rMostPlayed = [...eloStats].filter(p=>p.played>0).sort((a,b) => b.played - a.played);
-            const rBestWR     = [...qualified3].sort((a,b) => (b.wins/b.played) - (a.wins/a.played));
-            const rWorstWR    = [...qualified3].sort((a,b) => (a.wins/a.played) - (b.wins/b.played));
             const gwPerSet = p => p.setsPlayed > 0 ? p.gamesW / p.setsPlayed : 0;
             const glPerSet = p => p.setsPlayed > 0 ? p.gamesL / p.setsPlayed : 0;
             const rGwPerSet = [...qualified3].filter(p => p.setsPlayed > 0).sort((a,b) => gwPerSet(b) - gwPerSet(a));
             const rGlPerSet = [...qualified3].filter(p => p.setsPlayed > 0).sort((a,b) => glPerSet(a) - glPerSet(b));
-            const gamePct = p => (p.gamesW + p.gamesL) > 0 ? p.gamesW / (p.gamesW + p.gamesL) : 0;
-            const rBestPct = [...qualified3].sort((a,b) => gamePct(b) - gamePct(a));
-            const rWorstPct = [...qualified3].sort((a,b) => gamePct(a) - gamePct(b));
 
             // ── 6-0 infligés / encaissés + % de sets + régicide ──
             const bagelsFor = {}, bagelsAgainst = {}, setsWon = {}, setsLost = {};
@@ -2304,28 +2299,10 @@ export default function PadelTracker() {
             ].filter(Boolean);
 
             const playerRecords = [
-              rMostPlayed[0] && { icon: "🎾", title: "+ de matchs", holder: rMostPlayed[0].name, value: `${rMostPlayed[0].played}`, color: C.accent,
-                detail: <Top3 valueColor={C.accent} entries={rMostPlayed.map(p => ({ label: p.name, value: `${p.played} matchs` }))} /> },
-              rBestWR[0] && { icon: "🔥", title: "Meilleur win rate", holder: rBestWR[0].name, value: `${Math.round(rBestWR[0].wins/rBestWR[0].played*100)}%`, color: C.green,
-                detail: <Top3 valueColor={C.green} entries={rBestWR.map(p => ({ label: `${p.name} (${p.wins}V/${p.losses}D)`, value: `${Math.round(p.wins/p.played*100)}%` }))} /> },
-              rWorstWR[0] && { icon: "😬", title: "Pire win rate", holder: rWorstWR[0].name, value: `${Math.round(rWorstWR[0].wins/rWorstWR[0].played*100)}%`, color: C.red,
-                detail: <Top3 valueColor={C.red} entries={rWorstWR.map(p => ({ label: `${p.name} (${p.wins}V/${p.losses}D)`, value: `${Math.round(p.wins/p.played*100)}%` }))} /> },
               rGwPerSet[0] && { icon: "🎯", title: "Jeux gagnés / set", holder: rGwPerSet[0].name, value: gwPerSet(rGwPerSet[0]).toFixed(1), color: C.green,
                 detail: <Top3 valueColor={C.green} entries={rGwPerSet.map(p => ({ label: `${p.name} (${p.setsPlayed} sets)`, value: gwPerSet(p).toFixed(2) }))} /> },
               rGlPerSet[0] && { icon: "🧱", title: "Moins de jeux encaissés / set", holder: rGlPerSet[0].name, value: glPerSet(rGlPerSet[0]).toFixed(1), color: C.blue,
                 detail: <Top3 valueColor={C.blue} entries={rGlPerSet.map(p => ({ label: `${p.name} (${p.setsPlayed} sets)`, value: glPerSet(p).toFixed(2) }))} /> },
-              rBestPct[0] && { icon: "⚔️", title: "Meilleur % de jeux gagnés", holder: rBestPct[0].name, value: `${Math.round(gamePct(rBestPct[0]) * 100)}%`, color: C.green,
-                detail: <Top3 valueColor={C.green} entries={rBestPct.map(p => ({ label: `${p.name} (${p.gamesW}G/${p.gamesL}P)`, value: `${Math.round(gamePct(p) * 100)}%` }))} /> },
-              rWorstPct[0] && { icon: "🛡️", title: "Pire % de jeux gagnés", holder: rWorstPct[0].name, value: `${Math.round(gamePct(rWorstPct[0]) * 100)}%`, color: C.red,
-                detail: <Top3 valueColor={C.red} entries={rWorstPct.map(p => ({ label: `${p.name} (${p.gamesW}G/${p.gamesL}P)`, value: `${Math.round(gamePct(p) * 100)}%` }))} /> },
-              oppEloStats[0] && { icon: "📅", title: "Calendrier le + dur", holder: oppEloStats[0].name, value: `${oppEloStats[0].avgOppElo}`, color: C.accent,
-                detail: <Top3 valueColor={C.accent} entries={oppEloStats.map(o => ({ label: `${o.name} (${o.count} matchs)`, value: `ELO moy. ${o.avgOppElo}` }))} /> },
-              giantStats[0] && { icon: "🏔️", title: "Tueur de géants", holder: giantStats[0].name, value: `${Math.round(giantStats[0].w / giantStats[0].total * 100)}%`, color: C.blue,
-                detail: <Top3 valueColor={C.blue} entries={giantStats.map(g => ({ label: `${g.name} (${g.w}V/${g.l}D vs top 3)`, value: `${Math.round(g.w / g.total * 100)}%` }))} /> },
-              rStreakW[0] && rStreakW[0].maxW >= 2 && { icon: "⚡", title: "Série de victoires", holder: rStreakW[0].name, value: `${rStreakW[0].maxW}`, color: C.green,
-                detail: <Top3 valueColor={C.green} entries={rStreakW.map(s => ({ label: s.name, value: `${s.maxW} victoires` }))} /> },
-              rStreakL[0] && rStreakL[0].maxL >= 2 && { icon: "❄️", title: "Série de défaites", holder: rStreakL[0].name, value: `${rStreakL[0].maxL}`, color: C.red,
-                detail: <Top3 valueColor={C.red} entries={rStreakL.map(s => ({ label: s.name, value: `${s.maxL} défaites` }))} /> },
               rBestSets[0] && { icon: "🎯", title: "Meilleur % de sets", holder: rBestSets[0].name, value: `${Math.round(pctSets(rBestSets[0].id) * 100)}%`, color: C.green,
                 detail: <Top3 valueColor={C.green} entries={rBestSets.map(p => ({ label: `${p.name} (${setsWon[p.id]}S/${setsLost[p.id]}P)`, value: `${Math.round(pctSets(p.id) * 100)}%` }))} /> },
               rWorstSets[0] && { icon: "📉", title: "Pire % de sets", holder: rWorstSets[0].name, value: `${Math.round(pctSets(rWorstSets[0].id) * 100)}%`, color: C.red,
@@ -2334,8 +2311,19 @@ export default function PadelTracker() {
                 detail: <Top3 valueColor={C.green} entries={rBagelsFor.map(p => ({ label: p.name, value: `${bagelsFor[p.id]} set${bagelsFor[p.id] > 1 ? "s" : ""} blanc${bagelsFor[p.id] > 1 ? "s" : ""}` }))} /> },
               rBagelsAgainst[0] && { icon: "😵", title: "Encaisseur de 6-0", holder: rBagelsAgainst[0].name, value: `${bagelsAgainst[rBagelsAgainst[0].id]}`, color: C.red,
                 detail: <Top3 valueColor={C.red} entries={rBagelsAgainst.map(p => ({ label: p.name, value: `${bagelsAgainst[p.id]} set${bagelsAgainst[p.id] > 1 ? "s" : ""} blanc${bagelsAgainst[p.id] > 1 ? "s" : ""}` }))} /> },
+              rStreakW[0] && rStreakW[0].maxW >= 2 && { icon: "⚡", title: "Série de victoires", holder: rStreakW[0].name, value: `${rStreakW[0].maxW}`, color: C.green,
+                detail: <Top3 valueColor={C.green} entries={rStreakW.map(s => ({ label: s.name, value: `${s.maxW} victoires` }))} /> },
+              rStreakL[0] && rStreakL[0].maxL >= 2 && { icon: "❄️", title: "Série de défaites", holder: rStreakL[0].name, value: `${rStreakL[0].maxL}`, color: C.red,
+                detail: <Top3 valueColor={C.red} entries={rStreakL.map(s => ({ label: s.name, value: `${s.maxL} défaites` }))} /> },
+              giantStats[0] && { icon: "🏔️", title: "Tueur de géants", holder: giantStats[0].name, value: `${Math.round(giantStats[0].w / giantStats[0].total * 100)}%`, color: C.blue,
+                detail: <Top3 valueColor={C.blue} entries={giantStats.map(g => ({ label: `${g.name} (${g.w}V/${g.l}D vs top 3)`, value: `${Math.round(g.w / g.total * 100)}%` }))} /> },
               rRegicide[0] && { icon: "🗡️", title: "Régicide", holder: rRegicide[0].name, value: `${regicide[rRegicide[0].id]}`, color: C.blue,
                 detail: <Top3 valueColor={C.blue} entries={rRegicide.map(p => ({ label: `${p.name} — victoires vs le n°1 en titre`, value: `${regicide[p.id]}` }))} /> },
+            
+              rMostPlayed[0] && { icon: "🎾", title: "+ de matchs", holder: rMostPlayed[0].name, value: `${rMostPlayed[0].played}`, color: C.accent,
+                detail: <Top3 valueColor={C.accent} entries={rMostPlayed.map(p => ({ label: p.name, value: `${p.played} matchs` }))} /> },
+              oppEloStats[0] && { icon: "📅", title: "Calendrier le + dur", holder: oppEloStats[0].name, value: `${oppEloStats[0].avgOppElo}`, color: C.accent,
+                detail: <Top3 valueColor={C.accent} entries={oppEloStats.map(o => ({ label: `${o.name} (${o.count} matchs)`, value: `ELO moy. ${o.avgOppElo}` }))} /> },
             ].filter(Boolean);
 
             // Trophy tile
